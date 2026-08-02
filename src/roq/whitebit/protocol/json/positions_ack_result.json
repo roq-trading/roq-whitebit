@@ -1,0 +1,19 @@
+{
+  "name": "roq/whitebit/protocol/json/PositionsAckResult",
+  "type": "dictionary",
+  "values": [
+    {
+      "name": "list",
+      "type": "roq/whitebit/protocol/json/PositionsAckResultListItem",
+      "array": "std/span"
+    },
+    {
+      "name": "nextPageCursor",
+      "type": "std/string_view"
+    },
+    {
+      "name": "category",
+      "type": "roq/whitebit/protocol/json/Category"
+    }
+  ]
+}

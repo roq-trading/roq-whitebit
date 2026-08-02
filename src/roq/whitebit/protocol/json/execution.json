@@ -1,0 +1,23 @@
+{
+  "name": "roq/whitebit/protocol/json/Execution",
+  "type": "dictionary",
+  "values": [
+    {
+      "name": "id",
+      "type": "std/string_view"
+    },
+    {
+      "name": "topic",
+      "type": "std/string_view"
+    },
+    {
+      "name": "creationTime",
+      "type": "std/milliseconds"
+    },
+    {
+      "name": "data",
+      "type": "roq/whitebit/protocol/json/ExecutionDataItem",
+      "array": "std/span"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "roq/whitebit/protocol/json/OptionsType",
+  "type": "enum",
+  "values": [
+    {
+      "name": "Call"
+    },
+    {
+      "name": "Put"
+    }
+  ]
+}

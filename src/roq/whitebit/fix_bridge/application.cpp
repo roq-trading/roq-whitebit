@@ -1,0 +1,33 @@
+/* Copyright (c) 2017-2026, Hans Erik Thrane */
+
+#include "roq/whitebit/fix_bridge/application.hpp"
+
+#include "roq/logging.hpp"
+
+#include "roq/server/fix_bridge/controller.hpp"
+
+#include "roq/whitebit/gateway/controller.hpp"
+
+#include "roq/whitebit/fix_bridge/config.hpp"
+#include "roq/whitebit/fix_bridge/settings.hpp"
+
+using namespace std::literals;
+
+namespace roq {
+namespace whitebit {
+namespace fix_bridge {
+
+// === IMPLEMENTATION ===
+
+int Application::main(args::Parser const &args) {
+  Settings settings{args};
+  Config config{settings};
+  log::warn("config={}"sv, config);
+  auto context = server::create_io_context(settings);
+  server::fix_bridge::Controller<gateway::Controller>{settings, config, *context}.dispatch();
+  return EXIT_SUCCESS;
+}
+
+}  // namespace fix_bridge
+}  // namespace whitebit
+}  // namespace roq

@@ -1,0 +1,1363 @@
+/* Copyright (c) 2017-2026, Hans Erik Thrane */
+
+#include "roq/whitebit/gateway/order_entry_rest.hpp"
+
+#include "roq/mask.hpp"
+
+#include "roq/utils/common.hpp"
+#include "roq/utils/safe_cast.hpp"
+
+#include "roq/utils/metrics/factory.hpp"
+
+#include "roq/server/oms/exceptions.hpp"
+
+#include "roq/whitebit/protocol/json/encoder.hpp"
+#include "roq/whitebit/protocol/json/map.hpp"
+#include "roq/whitebit/protocol/json/utils.hpp"
+
+using namespace std::literals;
+
+namespace roq {
+namespace whitebit {
+namespace gateway {
+
+// === CONSTANTS ===
+
+namespace {
+auto const NAME = "om"sv;
+}  // namespace
+
+// === HELPERS ===
+
+namespace {
+auto get_supports(auto api) {
+  auto result = Mask{
+      SupportType::CREATE_ORDER,
+      SupportType::CANCEL_ORDER,
+      SupportType::ORDER_ACK,
+      SupportType::FUNDS,
+  };
+  if (api != tools::API::SPOT) {
+    result |= SupportType::MODIFY_ORDER;
+  }
+  return result;
+}
+
+size_t const MAX_DECODE_BUFFER_DEPTH = 2;
+
+size_t const DOWNLOAD_TRADES_LIMIT = 100;
+}  // namespace
+
+// === CONSTANTS ===
+
+namespace {
+auto create_name(auto stream_id, auto const &account) {
+  return fmt::format("{}:{}:{}"sv, stream_id, NAME, account);
+}
+
+auto create_connection(auto &handler, auto &settings, auto &context) {
+  auto uri = settings.rest.uri;
+  auto config = web::rest::Client::Config{
+      // connection
+      .interface = {},
+      .proxy = settings.rest.proxy,
+      .uris = {&uri, 1},
+      .host = settings.rest.host,
+      .validate_certificate = settings.net.tls_validate_certificate,
+      // connection manager
+      .connection_timeout = {},
+      .disconnect_on_idle_timeout = {},
+      .connection = web::http::Connection::KEEP_ALIVE,
+      // request
+      .allow_pipelining = true,
+      .request_timeout = settings.rest.request_timeout,
+      // response
+      .suspend_on_retry_after = {},
+      // http
+      .query = {},
+      .user_agent = ROQ_PACKAGE_NAME,
+      .ping_frequency = settings.rest.ping_freq,
+      .ping_path = settings.rest.ping_path,
+      // implementation
+      .decode_buffer_size = settings.misc.decode_buffer_size,
+      .encode_buffer_size = settings.misc.encode_buffer_size,
+  };
+  return web::rest::Client::create(handler, context, config);
+}
+
+struct create_metrics final : public utils::metrics::Factory {
+  create_metrics(auto &settings, auto &group, auto const &function) : utils::metrics::Factory{settings.app.name, group, function} {}
+};
+
+auto get_download_trades_lookback(auto &settings, auto download_trades_is_first) {
+  if (download_trades_is_first) {
+    if (settings.download.trades_lookback_on_restart.count()) {
+      return settings.download.trades_lookback_on_restart;
+    }
+  }
+  return settings.download.trades_lookback;
+}
+}  // namespace
+
+// === IMPLEMENTATION ===
+
+OrderEntryREST::OrderEntryREST(OrderEntry::Handler &handler, io::Context &context, uint16_t stream_id, Account &account, Shared &shared)
+    : handler_{handler}, stream_id_{stream_id}, name_{create_name(stream_id_, account.name)}, connection_{create_connection(*this, shared.settings, context)},
+      decode_buffer_{shared.settings.misc.decode_buffer_size, MAX_DECODE_BUFFER_DEPTH},
+      counter_{
+          .disconnect = create_metrics(shared.settings, name_, "disconnect"sv),
+      },
+      profile_{
+          .account_info = create_metrics(shared.settings, name_, "account_info"sv),
+          .account_info_ack = create_metrics(shared.settings, name_, "account_info_ack"sv),
+          .wallet_balance = create_metrics(shared.settings, name_, "wallet_balance"sv),
+          .wallet_balance_ack = create_metrics(shared.settings, name_, "wallet_balance_ack"sv),
+          .position_info = create_metrics(shared.settings, name_, "position_info"sv),
+          .position_info_ack = create_metrics(shared.settings, name_, "position_info_ack"sv),
+          .open_orders = create_metrics(shared.settings, name_, "open_orders"sv),
+          .open_orders_ack = create_metrics(shared.settings, name_, "open_orders_ack"sv),
+          .execution = create_metrics(shared.settings, name_, "execution"sv),
+          .execution_ack = create_metrics(shared.settings, name_, "execution_ack"sv),
+          .place_order = create_metrics(shared.settings, name_, "place_order"sv),
+          .place_order_ack = create_metrics(shared.settings, name_, "place_order_ack"sv),
+          .amend_order = create_metrics(shared.settings, name_, "amend_order"sv),
+          .amend_order_ack = create_metrics(shared.settings, name_, "amend_order_ack"sv),
+          .cancel_order = create_metrics(shared.settings, name_, "cancel_order"sv),
+          .cancel_order_ack = create_metrics(shared.settings, name_, "cancel_order_ack"sv),
+          .cancel_all_orders = create_metrics(shared.settings, name_, "cancel_all_orders"sv),
+          .cancel_all_orders_ack = create_metrics(shared.settings, name_, "cancel_all_orders_ack"sv),
+      },
+      latency_{
+          .ping = create_metrics(shared.settings, name_, "ping"sv),
+      },
+      account_{account}, shared_{shared}, download_{shared.settings.rest.request_timeout, [this](auto state) { return download(state); }} {
+}
+
+// OrderEntry
+
+void OrderEntryREST::operator()(Event<Start> const &) {
+  (*connection_).start();
+}
+
+void OrderEntryREST::operator()(Event<Stop> const &) {
+  (*connection_).stop();
+}
+
+void OrderEntryREST::operator()(Event<Timer> const &event) {
+  auto now = event.value.now;
+  (*connection_).refresh(now);
+  if (ready()) {
+    check_request_queue(now);
+  }
+}
+
+void OrderEntryREST::operator()(metrics::Writer &writer) const {
+  writer
+      // counter
+      .write(counter_.disconnect, metrics::Type::COUNTER)
+      // profile
+      .write(profile_.account_info, metrics::Type::PROFILE)
+      .write(profile_.account_info_ack, metrics::Type::PROFILE)
+      .write(profile_.wallet_balance, metrics::Type::PROFILE)
+      .write(profile_.wallet_balance_ack, metrics::Type::PROFILE)
+      .write(profile_.position_info, metrics::Type::PROFILE)
+      .write(profile_.position_info_ack, metrics::Type::PROFILE)
+      .write(profile_.open_orders, metrics::Type::PROFILE)
+      .write(profile_.open_orders_ack, metrics::Type::PROFILE)
+      .write(profile_.execution, metrics::Type::PROFILE)
+      .write(profile_.execution_ack, metrics::Type::PROFILE)
+      .write(profile_.place_order, metrics::Type::PROFILE)
+      .write(profile_.place_order_ack, metrics::Type::PROFILE)
+      .write(profile_.amend_order, metrics::Type::PROFILE)
+      .write(profile_.amend_order_ack, metrics::Type::PROFILE)
+      .write(profile_.cancel_order, metrics::Type::PROFILE)
+      .write(profile_.cancel_order_ack, metrics::Type::PROFILE)
+      .write(profile_.cancel_all_orders, metrics::Type::PROFILE)
+      .write(profile_.cancel_all_orders_ack, metrics::Type::PROFILE)
+      // latency
+      .write(latency_.ping, metrics::Type::LATENCY);
+}
+
+uint16_t OrderEntryREST::operator()(
+    Event<CreateOrder> const &event, server::oms::Order const &order, server::oms::RefData const &ref_data, std::string_view const &request_id) {
+  place_order(event, order, ref_data, request_id);
+  return stream_id_;
+}
+
+uint16_t OrderEntryREST::operator()(
+    Event<ModifyOrder> const &event,
+    server::oms::Order const &order,
+    server::oms::RefData const &ref_data,
+    std::string_view const &request_id,
+    std::string_view const &previous_request_id) {
+  amend_order(event, order, ref_data, request_id, previous_request_id);
+  return stream_id_;
+}
+
+uint16_t OrderEntryREST::operator()(
+    Event<CancelOrder> const &event,
+    server::oms::Order const &order,
+    server::oms::RefData const &ref_data,
+    std::string_view const &request_id,
+    std::string_view const &previous_request_id) {
+  cancel_order(event, order, ref_data, request_id, previous_request_id);
+  return stream_id_;
+}
+
+uint16_t OrderEntryREST::operator()(Event<CancelAllOrders> const &event, std::string_view const &request_id) {
+  cancel_all_orders(event, request_id);
+  return stream_id_;
+}
+
+// web::rest::Client::Handler
+
+void OrderEntryREST::operator()(Trace<web::rest::Client::Connected> const &) {
+  if (download_.downloading()) {
+    download_.bump();
+  } else {
+    download_.begin();
+  }
+}
+
+void OrderEntryREST::operator()(Trace<web::rest::Client::Disconnected> const &) {
+  ++counter_.disconnect;
+  (*this)(ConnectionStatus::DISCONNECTED);
+  if (!download_.downloading()) {
+    download_.reset();
+  }
+}
+
+void OrderEntryREST::operator()(Trace<web::rest::Client::Latency> const &event) {
+  auto &[trace_info, latency] = event;
+  auto external_latency = ExternalLatency{
+      .stream_id = stream_id_,
+      .account = account_.name,
+      .latency = latency.sample,
+  };
+  create_trace_and_dispatch(shared_.dispatcher, trace_info, external_latency);
+  latency_.ping.update(latency.sample);
+}
+
+// helpers
+
+void OrderEntryREST::operator()(ConnectionStatus connection_status, std::string_view const &reason) {
+  connection_status_ = connection_status;
+  TraceInfo trace_info;
+  auto stream_status = StreamStatus{
+      .stream_id = stream_id_,
+      .account = account_.name,
+      .supports = get_supports(shared_.api.api),
+      .transport = Transport::TCP,
+      .protocol = Protocol::HTTP,
+      .encoding = {Encoding::JSON},
+      .priority = Priority::PRIMARY,
+      .connection_status = connection_status_,
+      .reason = reason,
+      .interface = (*connection_).get_interface(),
+      .authority = (*connection_).get_current_authority(),
+      .path = (*connection_).get_current_path(),
+      .proxy = (*connection_).get_proxy(),
+  };
+  log::info("stream_status={}"sv, stream_status);
+  create_trace_and_dispatch(shared_.dispatcher, trace_info, stream_status);
+}
+
+uint32_t OrderEntryREST::download(State state) {
+  switch (state) {
+    using enum State;
+    case UNDEFINED:
+      assert(false);
+      break;
+    case ACCOUNT_INFO:
+      (*this)(ConnectionStatus::DOWNLOADING, "account-info"sv);
+      get_account_info();
+      return 1;
+    case DONE:
+      (*this)(ConnectionStatus::READY);
+      return 0;
+  }
+  assert(false);
+  return 0;
+}
+
+void OrderEntryREST::check_request_queue(std::chrono::nanoseconds now) {
+  auto request = [&](auto &message) {
+    auto &[topic, symbol] = message;
+    if (topic == "wallet"sv) {
+      get_wallet_balance();
+    } else if (topic == "position"sv) {
+      get_positions(symbol);
+    } else if (topic == "order"sv) {
+      get_orders(symbol);
+    } else if (topic == "execution"sv) {
+      get_executions(symbol);
+    }
+  };
+  if (account_.request_queue.dispatch(now, request)) {
+    log::debug("HERE size={}"sv, std::size(account_.request_queue));
+  }
+}
+
+// account-info
+
+void OrderEntryREST::get_account_info() {
+  profile_.account_info([&]() {
+    auto path = shared_.api.simple.account_info;
+    auto headers = account_.create_headers(path, {}, {});
+    auto request = web::rest::Request{
+        .method = web::http::Method::GET,
+        .path = path,
+        .query = {},
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = {},
+        .headers = headers,
+        .body = {},
+        .quality_of_service = {},
+    };
+    auto callback = [this, sequence = download_.sequence()]([[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      get_account_info_ack(event, sequence);
+    };
+    (*connection_)("account"sv, request, callback);
+  });
+}
+
+void OrderEntryREST::get_account_info_ack(Trace<web::rest::Response> const &event, [[maybe_unused]] uint32_t sequence) {
+  auto const STATE = State::ACCOUNT_INFO;
+  profile_.account_info_ack([&]() {
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+      if (download_.downloading()) {
+        download_.retry(STATE);
+      }
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::AccountInfoAck account_info_ack{body, decode_buffer_};
+      if (account_info_ack.ret_code == 0) {
+        Trace event_2{event, account_info_ack};
+        (*this)(event_2);
+        download_.check_relaxed(STATE);
+      } else {
+        handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(account_info_ack.ret_code), account_info_ack.ret_msg);
+      }
+    };
+    process_response(event, handle_error, handle_success);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::AccountInfoAck> const &event) {
+  auto &[trace_info, account_info_ack] = event;
+  log::info<2>("account_info_ack={}"sv, account_info_ack);
+  // XXX HANS maybe do something with unified account ???
+}
+
+// wallet-balance
+
+void OrderEntryREST::get_wallet_balance() {
+  profile_.wallet_balance([&]() {
+    auto path = shared_.api.simple.account_wallet_balance;
+    auto account_type = [&]() -> std::string_view {
+      switch (shared_.api.api) {
+        using enum tools::API;
+        case UNDEFINED:
+          break;
+        case SPOT:
+          return "UNIFIED"sv;
+        case LINEAR:
+          return "UNIFIED"sv;
+        case INVERSE:
+          return "UNIFIED"sv;
+        case OPTION:
+          return "UNIFIED"sv;
+      }
+      log::fatal("Unexpected"sv);
+    }();
+    auto query = fmt::format("?accountType={}"sv, account_type);
+    auto headers = account_.create_headers(path, query, {});
+    auto request = web::rest::Request{
+        .method = web::http::Method::GET,
+        .path = path,
+        .query = query,
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = {},
+        .headers = headers,
+        .body = {},
+        .quality_of_service = {},
+    };
+    auto callback = [this]([[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      get_wallet_balance_ack(event);
+    };
+    (*connection_)("wallet"sv, request, callback);
+  });
+}
+
+void OrderEntryREST::get_wallet_balance_ack(Trace<web::rest::Response> const &event) {
+  profile_.wallet_balance_ack([&]() {
+    if (event.value.status() == web::http::Status::NOT_FOUND) {
+      return;
+    }
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::WalletBalanceAck wallet_balance_ack{body, decode_buffer_};
+      if (wallet_balance_ack.ret_code == 0) {
+        Trace event_2{event, wallet_balance_ack};
+        (*this)(event_2);
+      } else {
+        handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(wallet_balance_ack.ret_code), wallet_balance_ack.ret_msg);
+      }
+    };
+    process_response(event, handle_error, handle_success);
+    auto response = Response{
+        .account = account_.name,
+        .topic = "wallet"sv,
+        .symbol = {},
+    };
+    create_trace_and_dispatch(handler_, event, response);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::WalletBalanceAck> const &event) {
+  auto &[trace_info, wallet_balance_ack] = event;
+  log::info<2>("wallet_balance_ack={}"sv, wallet_balance_ack);
+  for (auto &item : wallet_balance_ack.result.list) {
+    log::info<2>("item={}"sv, item);
+    for (auto &item_2 : item.coin) {
+      // XXX maybe margin mode is from account_type?
+      auto funds_update = FundsUpdate{
+          .stream_id = stream_id_,
+          .account = account_.name,
+          .currency = item_2.coin,
+          .margin_mode = {},
+          .balance = item_2.wallet_balance,  // XXX item.free ???
+          .hold = item_2.locked,
+          .borrowed = NaN,
+          .unrealized_pnl = NaN,
+          .external_account = {},
+          .update_type = UpdateType::SNAPSHOT,
+          .exchange_time_utc = {},
+          .sending_time_utc = {},  // XXX lost when flattened
+      };
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, funds_update, true);
+    }
+  }
+}
+
+// positions
+
+void OrderEntryREST::get_positions(std::string_view const &symbol) {
+  profile_.position_info([&]() {
+    assert(shared_.api.api != tools::API::SPOT);
+    auto path = shared_.api.simple.position_list;
+    auto category = [&]() -> std::string_view {
+      switch (shared_.api.api) {
+        using enum tools::API;
+        case UNDEFINED:
+          break;
+        case SPOT:
+          break;
+        case LINEAR:
+          return "linear"sv;
+        case INVERSE:
+          return "inverse"sv;
+        case OPTION:
+          return "option"sv;
+      }
+      log::fatal("Unexpected"sv);
+    }();
+    auto query = fmt::format("?category={}&symbol={}&limit=200"sv, category, symbol);
+    auto headers = account_.create_headers(path, query, {});
+    auto request = web::rest::Request{
+        .method = web::http::Method::GET,
+        .path = path,
+        .query = query,
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = {},
+        .headers = headers,
+        .body = {},
+        .quality_of_service = {},
+    };
+    auto callback = [this, symbol = std::string{symbol}]([[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      get_positions_ack(event, symbol);
+    };
+    (*connection_)("position"sv, request, callback);
+  });
+}
+
+void OrderEntryREST::get_positions_ack(Trace<web::rest::Response> const &event, std::string_view const &symbol) {
+  profile_.position_info_ack([&]() {
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::PositionsAck positions_ack{body, decode_buffer_};
+      if (positions_ack.ret_code == 0) {
+        Trace event_2{event, positions_ack};
+        (*this)(event_2);
+      } else {
+        handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(positions_ack.ret_code), positions_ack.ret_msg);
+      }
+    };
+    process_response(event, handle_error, handle_success);
+    auto response = Response{
+        .account = account_.name,
+        .topic = "position"sv,
+        .symbol = symbol,
+    };
+    create_trace_and_dispatch(handler_, event, response);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::PositionsAck> const &event) {
+  auto &[trace_info, positions_ack] = event;
+  log::info<2>("positions_ack={}"sv, positions_ack);
+  for (auto &item : positions_ack.result.list) {
+    log::info<2>("item={}"sv, item);
+    if (shared_.dispatcher.discard_symbol(item.symbol)) {
+      continue;
+    }
+    auto margin_mode = item.trade_mode == 0 ? MarginMode::CROSS : MarginMode::ISOLATED;
+    Side side = map(item.side);
+    auto quantity = utils::sign(side) * item.size;
+    auto long_quantity = std::max(0.0, quantity);
+    auto short_quantity = std::max(0.0, -quantity);
+    auto position_update = PositionUpdate{
+        .stream_id = stream_id_,
+        .account = account_.name,
+        .exchange = shared_.settings.exchange,
+        .symbol = item.symbol,
+        .margin_mode = margin_mode,
+        .external_account = {},
+        .long_quantity = long_quantity,
+        .short_quantity = short_quantity,
+        .update_type = UpdateType::SNAPSHOT,
+        .exchange_time_utc = item.updated_time,  // XXX created_time ???
+        .sending_time_utc = positions_ack.time,
+    };
+    create_trace_and_dispatch(shared_.dispatcher, trace_info, position_update, true);
+  }
+}
+
+// open-orders
+
+void OrderEntryREST::get_orders(std::string_view const &symbol) {
+  profile_.open_orders([&]() {
+    auto path = shared_.api.simple.order_realtime;
+    auto category = [&]() -> std::string_view {
+      switch (shared_.api.api) {
+        using enum tools::API;
+        case UNDEFINED:
+          break;
+        case SPOT:
+          return "spot"sv;
+        case LINEAR:
+          return "linear"sv;
+        case INVERSE:
+          return "inverse"sv;
+        case OPTION:
+          return "option"sv;
+      }
+      log::fatal("Unexpected"sv);
+    }();
+    auto query = fmt::format("?category={}&symbol={}&openOnly=0&limit=50"sv, category, symbol);
+    auto headers = account_.create_headers(path, query, {});
+    auto request = web::rest::Request{
+        .method = web::http::Method::GET,
+        .path = path,
+        .query = query,
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = {},
+        .headers = headers,
+        .body = {},
+        .quality_of_service = {},
+    };
+    auto callback = [this, symbol = std::string{symbol}]([[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      get_orders_ack(event, symbol);
+    };
+    (*connection_)("orders"sv, request, callback);
+  });
+}
+
+void OrderEntryREST::get_orders_ack(Trace<web::rest::Response> const &event, std::string_view const &symbol) {
+  profile_.open_orders_ack([&]() {
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::OrdersAck orders_ack{body, decode_buffer_};
+      if (orders_ack.ret_code == 0) {
+        Trace event_2{event, orders_ack};
+        (*this)(event_2);
+      } else {
+        handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(orders_ack.ret_code), orders_ack.ret_msg);
+      }
+    };
+    process_response(event, handle_error, handle_success);
+    auto response = Response{
+        .account = account_.name,
+        .topic = "order"sv,
+        .symbol = symbol,
+    };
+    create_trace_and_dispatch(handler_, event, response);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::OrdersAck> const &event) {
+  auto &[trace_info, orders_ack] = event;
+  log::info<2>("orders_ack={}"sv, orders_ack);
+  for (auto &item : orders_ack.result.list) {
+    log::info<2>("item={}"sv, item);
+    auto order_update = server::oms::OrderUpdate{
+        .account = account_.name,
+        .exchange = shared_.settings.exchange,
+        .symbol = item.symbol,
+        .side = map(item.side),
+        .position_effect = {},
+        .margin_mode = {},
+        .max_show_quantity = NaN,
+        .order_type = map(item.order_type),
+        .time_in_force = map(item.time_in_force),
+        .execution_instructions = {},
+        .create_time_utc = item.created_time,
+        .update_time_utc = item.updated_time,
+        .external_account = {},
+        .external_order_id = item.order_id,
+        .client_order_id = item.order_link_id,
+        .order_status = map(item.order_status),
+        .error = {},
+        .text = {},
+        .quantity = item.qty,
+        .price = item.price,
+        .stop_price = NaN,  // XXX item.trigger_price ???
+        .leverage = NaN,
+        .remaining_quantity = item.leaves_qty,
+        .traded_quantity = item.cum_exec_qty,
+        .average_traded_price = item.avg_price,
+        .last_traded_quantity = NaN,
+        .last_traded_price = NaN,
+        .last_liquidity = {},
+        .routing_id = {},
+        .max_request_version = {},
+        .max_response_version = {},
+        .max_accepted_version = {},
+        .update_type = UpdateType::SNAPSHOT,
+        .sending_time_utc = orders_ack.time,
+    };
+    create_trace_and_dispatch(shared_.dispatcher, trace_info, order_update, stream_id_);
+  }
+}
+
+// execution
+
+void OrderEntryREST::get_executions(std::string_view const &symbol) {
+  profile_.execution([&]() {
+    auto path = shared_.api.simple.execution_list;
+    auto category = [&]() -> std::string_view {
+      switch (shared_.api.api) {
+        using enum tools::API;
+        case UNDEFINED:
+          break;
+        case SPOT:
+          return "spot"sv;
+        case LINEAR:
+          return "linear"sv;
+        case INVERSE:
+          return "inverse"sv;
+        case OPTION:
+          return "option"sv;
+      }
+      log::fatal("Unexpected"sv);
+    }();
+    auto lookback = get_download_trades_lookback(shared_.settings, download_trades_is_first_);
+    log::info<1>("Download trades: lookback={}"sv, lookback);
+    auto end_time = clock::get_realtime() + 1min;  // note! make sure we don't miss anything
+    auto start_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - lookback);
+    auto limit = shared_.settings.download.trades_limit ? shared_.settings.download.trades_limit : DOWNLOAD_TRADES_LIMIT;
+    auto query = fmt::format(
+        "?category={}"
+        "&symbol={}"
+        "&startTime={}"
+        "&execType=Trade"
+        "&limit={}"sv,
+        category,
+        symbol,
+        start_time.count(),
+        limit);
+    auto headers = account_.create_headers(path, query, {});
+    auto request = web::rest::Request{
+        .method = web::http::Method::GET,
+        .path = path,
+        .query = query,
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = {},
+        .headers = headers,
+        .body = {},
+        .quality_of_service = {},
+    };
+    auto callback = [this, symbol = std::string{symbol}]([[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      get_executions_ack(event, symbol);
+    };
+    (*connection_)("execution"sv, request, callback);
+  });
+}
+
+void OrderEntryREST::get_executions_ack(Trace<web::rest::Response> const &event, std::string_view const &symbol) {
+  profile_.execution_ack([&]() {
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::ExecutionsAck executions_ack{body, decode_buffer_};
+      if (executions_ack.ret_code == 0) {
+        Trace event_2{event, executions_ack};
+        (*this)(event_2);
+      } else {
+        handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(executions_ack.ret_code), executions_ack.ret_msg);
+      }
+      download_trades_is_first_ = false;
+    };
+    process_response(event, handle_error, handle_success);
+    auto response = Response{
+        .account = account_.name,
+        .topic = "execution"sv,
+        .symbol = symbol,
+    };
+    create_trace_and_dispatch(handler_, event, response);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::ExecutionsAck> const &event) {
+  auto &[trace_info, executions_ack] = event;
+  log::info<2>("executions_ack={}"sv, executions_ack);
+  std::string_view order_id, order_link_id, symbol;
+  Side side = {};
+  std::chrono::nanoseconds exec_time = {};
+  double multiplier = NaN;
+  auto dispatch = [&]() {
+    if (std::empty(shared_.fills)) {
+      return;
+    }
+    auto trade_update = TradeUpdate{
+        .stream_id = stream_id_,
+        .account = account_.name,
+        .order_id = {},
+        .exchange = shared_.settings.exchange,
+        .symbol = symbol,
+        .side = side,
+        .position_effect = {},
+        .margin_mode = {},
+        .quantity_type = {},
+        .create_time_utc = utils::safe_cast(exec_time),
+        .update_time_utc = utils::safe_cast(exec_time),
+        .external_account = {},
+        .external_order_id = order_id,
+        .client_order_id = order_link_id,
+        .fills = shared_.fills,
+        .routing_id = {},
+        .update_type = UpdateType::SNAPSHOT,
+        .sending_time_utc = executions_ack.time,
+        .user = {},
+        .strategy_id = {},
+    };
+    create_trace_and_dispatch(shared_.dispatcher, trace_info, trade_update, true, SOURCE_NONE);
+    shared_.fills.clear();
+  };
+  for (auto &item : executions_ack.result.list) {
+    log::info<2>("item={}"sv, item);
+    /* XXX doesn't work with spot
+    if (item.exec_type != protocol::json::ExecType::TRADE)  // note!
+      continue;
+    */
+    if (item.order_id != order_id) {
+      dispatch();
+      order_id = item.order_id;
+      order_link_id = item.order_link_id;
+      symbol = item.symbol;
+      side = map(item.side);
+      exec_time = item.exec_time;
+      auto ref_data = shared_.dispatcher.get_ref_data(shared_.settings.exchange, symbol);
+      multiplier = ref_data.multiplier;
+    }
+    auto liquidity = item.is_maker ? Liquidity::MAKER : Liquidity::TAKER;
+    auto profit_loss_amount = utils::compute_profit_loss_amount(side, item.exec_qty, item.exec_price, multiplier);
+    auto fill = Fill{
+        .exchange_time_utc = item.exec_time,
+        .external_trade_id = item.exec_id,
+        .quantity = item.exec_qty,
+        .price = item.exec_price,
+        .liquidity = liquidity,
+        .commission_amount = item.exec_fee,  // XXX ???
+        .commission_currency = item.fee_currency,
+        .base_amount = NaN,
+        .quote_amount = NaN,
+        .profit_loss_amount = profit_loss_amount,
+    };
+    shared_.fills.emplace_back(fill);  // XXX FIXME TODO std::move ?
+  }
+  dispatch();
+}
+
+// place-order
+
+void OrderEntryREST::place_order(
+    Event<CreateOrder> const &event, server::oms::Order const &order, server::oms::RefData const &ref_data, std::string_view const &request_id) {
+  profile_.place_order([&]() {
+    if (!ready()) {
+      throw server::oms::NotReady{"not ready"sv};
+    }
+    auto &[message_info, create_order] = event;
+    auto path = shared_.api.simple.order_create;
+    auto body = protocol::json::Encoder::place_order(encode_buffer_, create_order, order, ref_data, request_id, shared_.api.category);
+    auto headers = account_.create_headers(path, {}, body);
+    auto request = web::rest::Request{
+        .method = web::http::Method::POST,
+        .path = path,
+        .query = {},
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = web::http::ContentType::APPLICATION_JSON,
+        .headers = headers,
+        .body = body,
+        .quality_of_service = {},
+    };
+    auto callback = [this, user_id = message_info.source, order_id = create_order.order_id]([[maybe_unused]] auto &request_id, auto &response) {
+      auto version = 1;
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      place_order_ack(event, user_id, order_id, version);
+    };
+    (*connection_)(request_id, request, callback);
+  });
+}
+
+void OrderEntryREST::place_order_ack(Trace<web::rest::Response> const &event, uint8_t user_id, uint64_t order_id, uint32_t version) {
+  profile_.place_order_ack([&]() {
+    auto &[trace_info, response] = event;
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::debug(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+      auto response = server::oms::Response{
+          .request_type = RequestType::CREATE_ORDER,
+          .origin = origin,
+          .request_status = status,
+          .error = error,
+          .text = text,
+          .version = version,
+          .request_id = {},
+          .external_order_id = {},
+          .client_order_id = {},
+          .quantity = NaN,
+          .price = NaN,
+      };
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, response, stream_id_, user_id, order_id);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::PlaceOrderAck place_order_ack{body, decode_buffer_};
+      // note! ret_code checked below
+      Trace event_2{event, place_order_ack};
+      (*this)(event_2, user_id, order_id, version);
+    };
+    process_response(event, handle_error, handle_success);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::PlaceOrderAck> const &event, uint8_t user_id, uint64_t order_id, uint32_t version) {
+  auto &[trace_info, place_order_ack] = event;
+  log::info<2>("place_order_ack={}"sv, place_order_ack);
+  auto request_status = place_order_ack.ret_code == 0 ? RequestStatus::ACCEPTED : RequestStatus::REJECTED;
+  auto error = protocol::json::map_error(place_order_ack.ret_code);
+  auto text = place_order_ack.ret_msg;
+  auto &result = place_order_ack.result;
+  auto response = server::oms::Response{
+      .request_type = RequestType::CREATE_ORDER,
+      .origin = Origin::EXCHANGE,
+      .request_status = request_status,
+      .error = error,
+      .text = text,
+      .version = version,
+      .request_id = result.order_link_id,
+      .external_order_id = result.order_id,
+      .client_order_id = result.order_link_id,
+      .quantity = NaN,
+      .price = NaN,
+  };
+  /*
+  // note! ACCEPTED not managed by fix-bridge
+  auto order_status = place_order_ack.ret_code == 0 ? OrderStatus::ACCEPTED : OrderStatus::REJECTED;
+  auto order_update = server::oms::OrderUpdate{
+      .account = account_.name,
+      .exchange = shared_.settings.exchange,
+      .symbol = {},
+      .side = {},
+      .position_effect = {},
+      .margin_mode = {},
+      .max_show_quantity = NaN,
+      .order_type = {},
+      .time_in_force = {},
+      .execution_instructions = {},
+      .create_time_utc = {},
+      .update_time_utc = place_order_ack.time,
+      .external_account = {},
+      .external_order_id = result.order_id,
+      .client_order_id = {},
+      .order_status = order_status,
+      .error={},.text={},
+      .quantity = NaN,
+      .price = NaN,
+      .stop_price = NaN,
+      .leverage = NaN,
+      .remaining_quantity = NaN,
+      .traded_quantity = NaN,
+      .average_traded_price = NaN,
+      .last_traded_quantity = NaN,
+      .last_traded_price = NaN,
+      .last_liquidity = {},
+      .routing_id = {},
+      .max_request_version = {},
+      .max_response_version = {},
+      .max_accepted_version = {},
+      .update_type = UpdateType::INCREMENTAL,
+      .sending_time_utc = place_order_ack.time,
+  };
+  */
+  create_trace_and_dispatch(shared_.dispatcher, trace_info, response, stream_id_, user_id, order_id);
+}
+
+// amend-order
+
+void OrderEntryREST::amend_order(
+    Event<ModifyOrder> const &event,
+    server::oms::Order const &order,
+    server::oms::RefData const &ref_data,
+    std::string_view const &request_id,
+    std::string_view const &previous_request_id) {
+  profile_.amend_order([&]() {
+    if (shared_.api.api == tools::API::SPOT) {
+      throw server::oms::NotSupported{"amend_order"sv};
+    }
+    if (!ready()) {
+      throw server::oms::NotReady{"not ready"sv};
+    }
+    auto &[message_info, modify_order] = event;
+    auto path = shared_.api.simple.order_amend;
+    auto body = protocol::json::Encoder::amend_order(encode_buffer_, modify_order, order, ref_data, request_id, previous_request_id, shared_.api.category);
+    auto headers = account_.create_headers(path, {}, body);
+    auto request = web::rest::Request{
+        .method = web::http::Method::POST,
+        .path = path,
+        .query = {},
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = web::http::ContentType::APPLICATION_JSON,
+        .headers = headers,
+        .body = body,
+        .quality_of_service = {},
+    };
+    auto callback = [this, user_id = message_info.source, order_id = modify_order.order_id, version = modify_order.version](
+                        [[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      amend_order_ack(event, user_id, order_id, version);
+    };
+    (*connection_)(request_id, request, callback);
+  });
+}
+
+void OrderEntryREST::amend_order_ack(Trace<web::rest::Response> const &event, uint8_t user_id, uint64_t order_id, uint32_t version) {
+  profile_.amend_order_ack([&]() {
+    auto &[trace_info, response] = event;
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::debug(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+      auto response = server::oms::Response{
+          .request_type = RequestType::MODIFY_ORDER,
+          .origin = origin,
+          .request_status = status,
+          .error = error,
+          .text = text,
+          .version = version,
+          .request_id = {},
+          .external_order_id = {},
+          .client_order_id = {},
+          .quantity = NaN,
+          .price = NaN,
+      };
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, response, stream_id_, user_id, order_id);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::AmendOrderAck amend_order_ack{body, decode_buffer_};
+      // note! ret_code checked below
+      Trace event_2{event, amend_order_ack};
+      (*this)(event_2, user_id, order_id, version);
+    };
+    process_response(event, handle_error, handle_success);
+  });
+}
+
+// XXX this is a little weird -- the response tells us the last known (?) status of the order
+void OrderEntryREST::operator()(Trace<protocol::json::AmendOrderAck> const &event, uint8_t user_id, uint64_t order_id, uint32_t version) {
+  auto &[trace_info, amend_order_ack] = event;
+  log::info<2>("amend_order_ack={}"sv, amend_order_ack);
+  auto status = amend_order_ack.ret_code == 0 ? RequestStatus::ACCEPTED : RequestStatus::REJECTED;
+  auto error = protocol::json::map_error(amend_order_ack.ret_code);
+  auto text = amend_order_ack.ret_msg;
+  auto &result = amend_order_ack.result;
+  auto response = server::oms::Response{
+      .request_type = RequestType::MODIFY_ORDER,
+      .origin = Origin::EXCHANGE,
+      .request_status = status,
+      .error = error,
+      .text = text,
+      .version = version,
+      .request_id = {},
+      .external_order_id = result.order_id,
+      .client_order_id = {},
+      .quantity = NaN,
+      .price = NaN,
+  };
+  auto remaining_quantity = result.order_qty - result.exec_qty;
+  auto order_update = server::oms::OrderUpdate{
+      .account = account_.name,
+      .exchange = shared_.settings.exchange,
+      .symbol = result.symbol,
+      .side = map(result.side),
+      .position_effect = {},
+      .margin_mode = {},
+      .max_show_quantity = NaN,
+      .order_type = map(result.order_type),
+      .time_in_force = map(result.time_in_force),
+      .execution_instructions = {},
+      .create_time_utc = {},
+      .update_time_utc = {},
+      .external_account = {},
+      .external_order_id = result.order_id,
+      .client_order_id = {},
+      .order_status = map(result.status),
+      .error = {},
+      .text = {},
+      .quantity = result.order_qty,
+      .price = result.order_price,
+      .stop_price = NaN,
+      .leverage = NaN,
+      .remaining_quantity = remaining_quantity,
+      .traded_quantity = result.exec_qty,
+      .average_traded_price = NaN,
+      .last_traded_quantity = NaN,
+      .last_traded_price = NaN,
+      .last_liquidity = {},
+      .routing_id = {},
+      .max_request_version = {},
+      .max_response_version = {},
+      .max_accepted_version = {},
+      .update_type = UpdateType::INCREMENTAL,
+      .sending_time_utc = amend_order_ack.time,
+  };
+  create_trace_and_dispatch(shared_.dispatcher, trace_info, response, order_update, stream_id_, user_id, order_id);
+}
+
+// cancel-order
+
+void OrderEntryREST::cancel_order(
+    Event<CancelOrder> const &event,
+    server::oms::Order const &order,
+    server::oms::RefData const &ref_data,
+    std::string_view const &request_id,
+    std::string_view const &previous_request_id) {
+  profile_.cancel_order([&]() {
+    if (!ready()) {
+      throw server::oms::NotReady{"not ready"sv};
+    }
+    auto &[message_info, cancel_order] = event;
+    auto path = shared_.api.simple.order_cancel;
+    auto body = protocol::json::Encoder::cancel_order(encode_buffer_, cancel_order, order, ref_data, request_id, previous_request_id, shared_.api.category);
+    auto headers = account_.create_headers(path, {}, body);
+    auto request = web::rest::Request{
+        .method = web::http::Method::POST,
+        .path = path,
+        .query = {},
+        .accept = web::http::Accept::APPLICATION_JSON,
+        .content_type = web::http::ContentType::APPLICATION_JSON,
+        .headers = headers,
+        .body = body,
+        .quality_of_service = {},
+    };
+    auto callback = [this, user_id = message_info.source, order_id = cancel_order.order_id, version = cancel_order.version](
+                        [[maybe_unused]] auto &request_id, auto &response) {
+      TraceInfo trace_info;
+      Trace event{trace_info, response};
+      cancel_order_ack(event, user_id, order_id, version);
+    };
+    (*connection_)(request_id, request, callback);
+  });
+}
+
+void OrderEntryREST::cancel_order_ack(Trace<web::rest::Response> const &event, uint8_t user_id, uint64_t order_id, uint32_t version) {
+  profile_.cancel_order_ack([&]() {
+    auto &[trace_info, response] = event;
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::debug(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+      auto response = server::oms::Response{
+          .request_type = RequestType::CANCEL_ORDER,
+          .origin = origin,
+          .request_status = status,
+          .error = error,
+          .text = text,
+          .version = version,
+          .request_id = {},
+          .external_order_id = {},
+          .client_order_id = {},
+          .quantity = NaN,
+          .price = NaN,
+      };
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, response, stream_id_, user_id, order_id);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::CancelOrderAck cancel_order_ack{body, decode_buffer_};
+      // note! ret_code checked below
+      Trace event_2{event, cancel_order_ack};
+      (*this)(event_2, user_id, order_id, version);
+    };
+    process_response(event, handle_error, handle_success);
+  });
+}
+
+// XXX this is a little weird -- the response tells us the last known (?) status of the order
+void OrderEntryREST::operator()(Trace<protocol::json::CancelOrderAck> const &event, uint8_t user_id, uint64_t order_id, uint32_t version) {
+  auto &[trace_info, cancel_order_ack] = event;
+  log::info<2>("cancel_order_ack={}"sv, cancel_order_ack);
+  auto status = cancel_order_ack.ret_code == 0 ? RequestStatus::ACCEPTED : RequestStatus::REJECTED;
+  auto error = protocol::json::map_error(cancel_order_ack.ret_code);
+  auto text = cancel_order_ack.ret_msg;
+  auto &result = cancel_order_ack.result;
+  auto response = server::oms::Response{
+      .request_type = RequestType::CANCEL_ORDER,
+      .origin = Origin::EXCHANGE,
+      .request_status = status,
+      .error = error,
+      .text = text,
+      .version = version,
+      .request_id = {},
+      .external_order_id = result.order_id,
+      .client_order_id = {},
+      .quantity = NaN,
+      .price = NaN,
+  };
+  auto remaining_quantity = result.order_qty - result.exec_qty;
+  auto order_update = server::oms::OrderUpdate{
+      .account = account_.name,
+      .exchange = shared_.settings.exchange,
+      .symbol = result.symbol,
+      .side = map(result.side),
+      .position_effect = {},
+      .margin_mode = {},
+      .max_show_quantity = NaN,
+      .order_type = map(result.order_type),
+      .time_in_force = map(result.time_in_force),
+      .execution_instructions = {},
+      .create_time_utc = {},
+      .update_time_utc = utils::safe_cast(result.cancel_time),
+      .external_account = {},
+      .external_order_id = result.order_id,
+      .client_order_id = {},
+      .order_status = map(result.status),
+      .error = {},
+      .text = {},
+      .quantity = result.order_qty,
+      .price = result.order_price,
+      .stop_price = NaN,
+      .leverage = NaN,
+      .remaining_quantity = remaining_quantity,
+      .traded_quantity = result.exec_qty,
+      .average_traded_price = NaN,
+      .last_traded_quantity = NaN,
+      .last_traded_price = NaN,
+      .last_liquidity = {},
+      .routing_id = {},
+      .max_request_version = {},
+      .max_response_version = {},
+      .max_accepted_version = {},
+      .update_type = UpdateType::INCREMENTAL,
+      .sending_time_utc = cancel_order_ack.time,
+  };
+  create_trace_and_dispatch(shared_.dispatcher, trace_info, response, order_update, stream_id_, user_id, order_id);
+}
+
+// cancel-all-orders
+
+void OrderEntryREST::cancel_all_orders(Event<CancelAllOrders> const &event, std::string_view const &request_id) {
+  profile_.cancel_all_orders([&]() {
+    if (!ready()) [[unlikely]] {
+      throw server::oms::NotReady{"not ready"sv};
+    }
+    auto &[message_info, cancel_all_orders] = event;
+    auto send_ack = [&](auto &symbol) {
+      auto cancel_all_orders_ack = CancelAllOrdersAck{
+          .stream_id = stream_id_,
+          .account = account_.name,
+          .order_id = cancel_all_orders.order_id,
+          .exchange = cancel_all_orders.exchange,
+          .symbol = symbol,
+          .side = cancel_all_orders.side,
+          .origin = Origin::GATEWAY,
+          .request_status = RequestStatus::FORWARDED,
+          .error = {},
+          .text = {},
+          .request_id = request_id,
+          .external_account = {},
+          .number_of_affected_orders = {},
+          .round_trip_latency = {},
+          .user = {},
+          .strategy_id = cancel_all_orders.strategy_id,
+      };
+      TraceInfo trace_info{event};
+      Trace event_2{trace_info, cancel_all_orders_ack};
+      shared_.dispatcher(event_2);
+    };
+    auto path = shared_.api.simple.order_cancel_all;
+    if (shared_.dispatcher.get_all_order_symbols(
+            [&](auto &symbol) {
+              if (!std::empty(cancel_all_orders.symbol) && symbol != cancel_all_orders.symbol) {
+                return;
+              }
+              auto body = protocol::json::Encoder::cancel_all_orders(encode_buffer_, cancel_all_orders, request_id, symbol, shared_.api.category);
+              auto headers = account_.create_headers(path, {}, body);
+              auto request = web::rest::Request{
+                  .method = web::http::Method::POST,
+                  .path = path,
+                  .query = {},
+                  .accept = web::http::Accept::APPLICATION_JSON,
+                  .content_type = web::http::ContentType::APPLICATION_JSON,
+                  .headers = headers,
+                  .body = body,
+                  .quality_of_service = {},
+              };
+              auto callback = [this](auto &request_id, auto &response) {
+                TraceInfo trace_info;
+                Trace event{trace_info, response};
+                cancel_all_orders_ack(event, request_id);
+              };
+              (*connection_)(request_id, request, callback);  // XXX FIXME TODO potentially many requests with same request_id
+              send_ack(symbol);
+            },
+            account_.name)) {
+    } else {
+      log::warn("*** NOT POSSIBLE TO CANCEL ALL OPEN ORDERS (NO SYMBOLS) ***"sv);
+    }
+  });
+}
+
+void OrderEntryREST::cancel_all_orders_ack(Trace<web::rest::Response> const &event, std::string_view const &request_id) {
+  profile_.cancel_all_orders_ack([&]() {
+    auto send_ack = [&](auto origin, auto status, Error error, std::string_view const &text) {
+      auto cancel_all_orders_ack = CancelAllOrdersAck{
+          .stream_id = stream_id_,
+          .account = account_.name,
+          .order_id = {},
+          .exchange = {},
+          .symbol = {},
+          .side = {},
+          .origin = origin,
+          .request_status = status,
+          .error = error,
+          .text = text,
+          .request_id = request_id,
+          .external_account = {},
+          .number_of_affected_orders = {},
+          .round_trip_latency = {},
+          .user = {},
+          .strategy_id = {},
+      };
+      Trace event_2{event, cancel_all_orders_ack};
+      shared_.dispatcher(event_2);
+    };
+    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
+      log::debug(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
+      send_ack(origin, RequestStatus::REJECTED, error, text);
+    };
+    auto handle_success = [&](auto &body) {
+      protocol::json::CancelAllOrdersAck cancel_all_orders_ack{body, decode_buffer_};
+      // XXX FIXME TODO ret_code ???
+      Trace event_2{event, cancel_all_orders_ack};
+      (*this)(event_2);
+      send_ack(Origin::EXCHANGE, RequestStatus::ACCEPTED, {}, {});
+    };
+    process_response(event, handle_error, handle_success);
+  });
+}
+
+void OrderEntryREST::operator()(Trace<protocol::json::CancelAllOrdersAck> const &event) {
+  auto &[trace_info, cancel_all_orders_ack] = event;
+  log::info<2>("cancel_all_orders_ack={}"sv, cancel_all_orders_ack);
+}
+
+// helpers
+
+void OrderEntryREST::process_response(web::rest::Response const &response, auto error_handler, auto success_handler) {
+  try {
+    auto [status, category, body] = response.result();
+    switch (category) {
+      using enum web::http::Category;
+      case UNKNOWN:
+      case INFORMATIONAL_RESPONSE:
+        response.expect(web::http::Status::OK);  // throws
+        break;
+      case SUCCESS:
+        success_handler(body);
+        break;
+      case REDIRECTION:
+        log::fatal("Unexpected: URL is being redirected"sv);
+      case CLIENT_ERROR:
+        switch (status) {
+          using enum web::http::Status;
+          case FORBIDDEN:           // 403
+            waf_limit_violation();  // note! this is *very* serious
+            [[fallthrough]];
+          case I_AM_A_TEAPOT:        // 418
+          case TOO_MANY_REQUESTS: {  // 429
+            auto text = fmt::format("{}"sv, status);
+            error_handler(Origin::EXCHANGE, RequestStatus::REJECTED, Error::REQUEST_RATE_LIMIT_REACHED, text);
+            break;
+          }
+          case CONFLICT:  // 409
+            assert(false);
+            [[fallthrough]];
+          default:
+            error_handler(Origin::EXCHANGE, RequestStatus::REJECTED, Error::UNKNOWN, ""sv);
+        }
+        break;
+      case SERVER_ERROR: {
+        auto text = fmt::format("{}"sv, status);
+        error_handler(Origin::EXCHANGE, RequestStatus::REJECTED, Error::UNKNOWN, text);
+        break;
+      }
+    }
+  } catch (server::oms::Exception &e) {
+    log::warn(R"(Exception type={}, what="{}")"sv, typeid(e).name(), e.what());
+    error_handler(e.origin, e.status, e.error, e.what());
+  } catch (NetworkError &e) {
+    log::warn(R"(Exception type={}, what="{}")"sv, typeid(e).name(), e.what());
+    error_handler(Origin::GATEWAY, e.request_status(), e.error(), e.what());
+  } catch (std::exception &e) {
+    log::warn(R"(Exception type={}, what="{}")"sv, typeid(e).name(), e.what());
+    error_handler(Origin::EXCHANGE, RequestStatus::ERROR, Error::UNKNOWN, e.what());
+  }
+}
+
+void OrderEntryREST::waf_limit_violation() {
+  if (shared_.settings.rest.terminate_on_403) {
+    log::fatal("WAF limit violation"sv);
+  } else {
+    log::warn("WAF limit violation"sv);
+    (*connection_).suspend(shared_.settings.rest.back_off_delay);
+  }
+}
+
+}  // namespace gateway
+}  // namespace whitebit
+}  // namespace roq
