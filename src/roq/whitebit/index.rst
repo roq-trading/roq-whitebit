@@ -1,5 +1,4 @@
 .. _roq-whitebit:
-.. _roq-whitebit-v5:
 
 .. |dagger| unicode:: U+2020
 .. |double-dagger| unicode:: U+2021
@@ -15,7 +14,7 @@
 
 
 `roq-whitebit <https://github.com/roq-trading/roq-whitebit/>`__
-=========================================================
+===============================================================
 
 .. tab:: Unstable
 
@@ -515,5 +514,5 @@ GitHub
 Exchange
 ~~~~~~~~
 
-* `Website <https://www.whitebit.com/>`__
-* `Documentation <https://whitebit-exchange.github.io/docs/v5/intro>`__
+* `Website <https://whitebit.com/>`__
+* `Documentation <https://docs.whitebit.com/>`__

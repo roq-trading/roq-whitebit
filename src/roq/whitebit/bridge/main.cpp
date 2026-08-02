@@ -22,7 +22,7 @@ auto const INFO = roq::Service::Info{
 
 // === IMPLEMENTATION ===
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   roq::flags::Args args{argc, argv, INFO.description, INFO.build_version};
   roq::logging::flags::Settings settings{args};
   return roq::whitebit::bridge::Application{args, settings, INFO}.run();
