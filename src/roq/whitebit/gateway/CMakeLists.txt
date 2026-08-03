@@ -5,10 +5,7 @@ set(SOURCES
     api.cpp
     config.cpp
     controller.cpp
-    drop_copy.cpp
     market_data.cpp
-    order_entry_rest.cpp
-    order_entry_ws.cpp
     rest.cpp
     shared.cpp)
 

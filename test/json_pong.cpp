@@ -10,19 +10,18 @@ using namespace roq::whitebit;
 using namespace std::literals;
 using namespace std::chrono_literals;
 
-using value_type = protocol::json::Ping;
+using value_type = protocol::json::Pong;
 
-TEST_CASE("simple", "[json_ping]") {
+TEST_CASE("simple", "[json_pong]") {
   auto message = R"({)"
-                 R"("success":true,)"
-                 R"("ret_msg":"pong",)"
-                 R"("conn_id":"6356e46e-283a-46ab-aa57-4cabd05176ff",)"
-                 R"("req_id":"78630463144691",)"
-                 R"("op":"ping")"
+                 R"("error": null, )"
+                 R"("result": "pong", )"
+                 R"("id": 177472028786210)"
                  R"(})"sv;
   auto helper = [](value_type const &obj) {
-    CHECK(obj.success == true);
-    CHECK(obj.ret_msg == "pong"sv);
+    CHECK(obj.id == 177472028786210);
+    CHECK(obj.result == "pong"sv);
+    // error
   };
   ParserTester<value_type>::dispatch(helper, message, 8192, 1);
 }

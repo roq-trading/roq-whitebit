@@ -89,10 +89,8 @@ Rest::Rest(Handler &handler, io::Context &context, uint16_t stream_id, Shared &s
           .disconnect = create_metrics(shared.settings, name_, "disconnect"sv),
       },
       profile_{
-          .instruments_info = create_metrics(shared.settings, name_, "instruments_info"sv),
-          .instruments_info_ack = create_metrics(shared.settings, name_, "instruments_info_ack"sv),
-          .kline = create_metrics(shared.settings, name_, "kline"sv),
-          .kline_ack = create_metrics(shared.settings, name_, "kline_ack"sv),
+          .market_info = create_metrics(shared.settings, name_, "market_info"sv),
+          .market_info_ack = create_metrics(shared.settings, name_, "market_info_ack"sv),
       },
       latency_{
           .ping = create_metrics(shared.settings, name_, "ping"sv),
@@ -112,9 +110,6 @@ void Rest::operator()(Event<Stop> const &) {
 void Rest::operator()(Event<Timer> const &event) {
   auto &[message_info, timer] = event;
   (*connection_).refresh(timer.now);
-  if (ready()) {
-    check_request_queue(timer.now);
-  }
 }
 
 void Rest::operator()(metrics::Writer &writer) const {
@@ -122,10 +117,8 @@ void Rest::operator()(metrics::Writer &writer) const {
       // counter
       .write(counter_.disconnect, metrics::Type::COUNTER)
       // profile
-      .write(profile_.instruments_info, metrics::Type::PROFILE)
-      .write(profile_.instruments_info_ack, metrics::Type::PROFILE)
-      .write(profile_.kline, metrics::Type::PROFILE)
-      .write(profile_.kline_ack, metrics::Type::PROFILE)
+      .write(profile_.market_info, metrics::Type::PROFILE)
+      .write(profile_.market_info_ack, metrics::Type::PROFILE)
       // latency
       .write(latency_.ping, metrics::Type::LATENCY);
 }
@@ -185,9 +178,9 @@ uint32_t Rest::download(State state) {
     case UNDEFINED:
       assert(false);
       break;
-    case GET_INSTRUMENTS_INFO:
+    case GET_MARKET_INFO:
       (*this)(ConnectionStatus::DOWNLOADING, "get-instruments-info"sv);
-      get_instruments_info();
+      get_market_info();
       return 1;
     case DONE:
       (*this)(ConnectionStatus::READY);
@@ -199,17 +192,12 @@ uint32_t Rest::download(State state) {
 
 // instruments-info
 
-void Rest::get_instruments_info() {
-  profile_.instruments_info([&]() {
-    auto query = fmt::format(
-        "?category={}"
-        "&status=Trading"
-        "&limit=1000"sv,
-        shared_.api.category.as_raw_text());
+void Rest::get_market_info() {
+  profile_.market_info([&]() {
     auto request = web::rest::Request{
         .method = web::http::Method::GET,
-        .path = shared_.api.market_data.instruments_info,
-        .query = query,
+        .path = shared_.api.market_data.market_info,
+        .query = {},
         .accept = web::http::Accept::APPLICATION_JSON,
         .content_type = {},
         .headers = {},
@@ -219,15 +207,15 @@ void Rest::get_instruments_info() {
     auto callback = [this, sequence = download_.sequence()]([[maybe_unused]] auto &request_id, auto &response) {
       TraceInfo trace_info;
       Trace event{trace_info, response};
-      get_instruments_info_ack(event, sequence);
+      get_market_info_ack(event, sequence);
     };
     (*connection_)("market-instrument-info"sv, request, callback);
   });
 }
 
-void Rest::get_instruments_info_ack(Trace<web::rest::Response> const &event, uint32_t sequence) {
-  auto const STATE = State::GET_INSTRUMENTS_INFO;
-  profile_.instruments_info_ack([&]() {
+void Rest::get_market_info_ack(Trace<web::rest::Response> const &event, uint32_t sequence) {
+  auto const STATE = State::GET_MARKET_INFO;
+  profile_.market_info_ack([&]() {
     auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
       log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
       download_.retry(STATE);
@@ -236,88 +224,68 @@ void Rest::get_instruments_info_ack(Trace<web::rest::Response> const &event, uin
       if (download_.skip(sequence, STATE)) {
         log::info("Download state={} has already been processed"sv, STATE);
       } else {
-        protocol::json::InstrumentsInfoAck instruments_info_ack{body, decode_buffer_};
-        if (instruments_info_ack.ret_code == 0) {
-          Trace event_2{event, instruments_info_ack};
-          (*this)(event_2);
-          download_.check(STATE);
-        } else {
-          handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(instruments_info_ack.ret_code), instruments_info_ack.ret_msg);
-        }
+        protocol::json::MarketInfoAck market_info_ack{body, decode_buffer_};
+        Trace event_2{event, market_info_ack};
+        (*this)(event_2);
+        download_.check(STATE);
       }
     };
     process_response(event, handle_error, handle_success);
   });
 }
 
-void Rest::operator()(Trace<protocol::json::InstrumentsInfoAck> const &event) {
-  auto &[trace_info, instruments_info_ack] = event;
-  log::info<4>("instruments_info_ack={}"sv, instruments_info_ack);
+void Rest::operator()(Trace<protocol::json::MarketInfoAck> const &event) {
+  auto &[trace_info, market_info_ack] = event;
+  log::info<4>("market_info_ack={}"sv, market_info_ack);
   std::vector<Symbol> symbols;
-  symbols.reserve(std::size(instruments_info_ack.result.list));  // alloc
+  symbols.reserve(std::size(market_info_ack.data));  // alloc
   size_t counter = 0;
-  for (auto &item : instruments_info_ack.result.list) {
+  for (auto &item : market_info_ack.data) {
     log::info<2>("item={}"sv, item);
-    auto discard = shared_.dispatcher.discard_symbol(item.symbol);
-    auto trade_vol_step_size = [&]() {
-      if (shared_.api.category == protocol::json::Category::type_t::SPOT) {
-        return item.lot_size_filter.base_precision;
-      }
-      return item.lot_size_filter.qty_step;
-    }();
+    auto discard = shared_.dispatcher.discard_symbol(item.name);
     auto reference_data = ReferenceData{
         .stream_id = stream_id_,
         .exchange = shared_.settings.exchange,
-        .symbol = item.symbol,
-        .description = item.display_name,
-        .security_type = map(item.contract_type, item.options_type),
+        .symbol = item.name,
+        .description = item.name,
+        .security_type = map(item.type),
         .external_security_id = {},
         .cfi_code = {},
-        .base_currency = item.base_coin,
-        .quote_currency = item.quote_coin,
-        .settlement_currency = item.settle_coin,
+        .base_currency = item.money,   // XXX FIXME TODO CHECK
+        .quote_currency = item.stock,  // XXX FIXME TODO CHECK
+        .settlement_currency = {},
         .margin_currency = {},
         .commission_currency = {},
-        .tick_size = item.price_filter.tick_size,
+        .tick_size = item.min_total,
         .tick_size_steps = {},
         .multiplier = NaN,
         .min_notional = NaN,
-        .min_trade_vol = item.lot_size_filter.min_order_qty,
-        .max_trade_vol = item.lot_size_filter.max_order_qty,
-        .trade_vol_step_size = trade_vol_step_size,
-        .option_type = map(item.options_type),
+        .min_trade_vol = item.min_total,
+        .max_trade_vol = item.max_total,
+        .trade_vol_step_size = {},
+        .option_type = {},
         .strike_currency = {},
         .strike_price = NaN,
         .underlying = {},
         .time_zone = {},
-        .issue_date = utils::safe_cast{item.launch_time},
+        .issue_date = {},
         .settlement_date = {},
         .expiry_datetime = {},
-        .expiry_datetime_utc = utils::safe_cast{item.delivery_time},
+        .expiry_datetime_utc = {},
         .exchange_time_utc = {},
         .exchange_sequence = {},
-        .sending_time_utc = instruments_info_ack.time,
+        .sending_time_utc = {},
         .discard = discard,
     };
     create_trace_and_dispatch(shared_.dispatcher, trace_info, reference_data, true);
     if (discard) {
-      log::info<1>(R"(Drop symbol="{}")"sv, item.symbol);
+      log::info<1>(R"(Drop symbol="{}")"sv, item.name);
       continue;
     }
-    if (shared_.all_symbols.emplace(item.symbol).second) {  // only include new
-      symbols.emplace_back(item.symbol);
+    if (shared_.all_symbols.emplace(item.name).second) {  // only include new
+      symbols.emplace_back(item.name);
     }
     ++counter;
-    auto market_status = MarketStatus{
-        .stream_id = stream_id_,
-        .exchange = shared_.settings.exchange,
-        .symbol = item.symbol,
-        .trading_status = map(item.status),
-        .exchange_time_utc = {},
-        .exchange_sequence = {},
-        .sending_time_utc = instruments_info_ack.time,
-    };
-    create_trace_and_dispatch(shared_.dispatcher, trace_info, market_status, true);
   }
   if (!std::empty(symbols)) {
     auto symbols_update = SymbolsUpdate{
@@ -326,107 +294,11 @@ void Rest::operator()(Trace<protocol::json::InstrumentsInfoAck> const &event) {
     handler_(symbols_update);
   }
   if (counter > 0) {
-    log::info("Symbols {} / {}"sv, counter, std::size(instruments_info_ack.result.list));
+    log::info("Symbols {} / {}"sv, counter, std::size(market_info_ack.data));
   }
-}
-
-// kline
-
-// TODO paginate by splitting begin/end by interval and limit
-void Rest::get_kline(std::string_view const &symbol) {
-  profile_.kline([&]() {
-    auto now = clock::get_realtime<std::chrono::milliseconds>();
-    auto start = now - shared_.settings.time_series.lookback;
-    auto query = fmt::format(
-        "?category={}"
-        "&symbol={}"
-        "&interval=1"
-        "&start={}"
-        "&limit={}"sv,
-        shared_.api.category.as_raw_text(),
-        symbol,
-        start.count(),
-        shared_.settings.download.time_series_limit);
-    auto request = web::rest::Request{
-        .method = web::http::Method::GET,
-        .path = shared_.api.market_data.kline,
-        .query = query,
-        .accept = web::http::Accept::APPLICATION_JSON,
-        .content_type = {},
-        .headers = {},
-        .body = {},
-        .quality_of_service = {},
-    };
-    auto callback = [this, symbol = std::string{symbol}]([[maybe_unused]] auto &request_id, auto &response) {
-      TraceInfo trace_info;
-      Trace event{trace_info, response};
-      get_kline_ack(event, symbol);
-    };
-    (*connection_)("kline"sv, request, callback);
-  });
-}
-
-void Rest::get_kline_ack(Trace<web::rest::Response> const &event, [[maybe_unused]] std::string_view const &symbol) {
-  profile_.instruments_info_ack([&]() {
-    auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
-      log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
-      // XXX FIXME TODO retry ???
-    };
-    auto handle_success = [&](auto &body) {
-      protocol::json::KlineAck kline_ack{body, decode_buffer_};
-      if (kline_ack.ret_code == 0) {
-        assert(kline_ack.result.symbol == symbol);
-        Trace event_2{event, kline_ack};
-        (*this)(event_2);
-      } else {
-        handle_error(Origin::EXCHANGE, RequestStatus::REJECTED, protocol::json::map_error(kline_ack.ret_code), kline_ack.ret_msg);
-      }
-    };
-    process_response(event, handle_error, handle_success);
-  });
-}
-
-void Rest::operator()(Trace<protocol::json::KlineAck> const &event) {
-  auto &[trace_info, kline_response] = event;
-  auto &bars = shared_.bars;
-  bars.clear();
-  for (auto &item : kline_response.result.list) {
-    auto bar = Bar{
-        .begin_time_utc = utils::safe_cast(item.start_time),
-        .confirmed = true,
-        .open_price = item.open_price,
-        .high_price = item.high_price,
-        .low_price = item.low_price,
-        .close_price = item.close_price,
-        .quantity = item.volume,
-        .base_amount = NaN,
-        .quote_amount = item.turnover,
-        .number_of_trades = {},
-        .vwap = NaN,
-    };
-    bars.emplace_back(std::move(bar));
-  }
-  auto time_series_update = TimeSeriesUpdate{
-      .stream_id = stream_id_,
-      .exchange = shared_.settings.exchange,
-      .symbol = kline_response.result.symbol,
-      .data_source = DataSource::TRADE_SUMMARY,
-      .interval = shared_.settings.time_series.interval,
-      .origin = Origin::EXCHANGE,
-      .bars = bars,
-      .update_type = UpdateType::SNAPSHOT,
-      .exchange_time_utc = kline_response.time,
-  };
-  create_trace_and_dispatch(shared_.dispatcher, trace_info, time_series_update, true);
 }
 
 // helpers
-
-void Rest::check_request_queue(std::chrono::nanoseconds now) {
-  auto can_request = [&](auto now) { return shared_.rate_limiter.can_request(now); };
-  auto request = [&](auto &symbol) { get_kline(symbol); };
-  shared_.time_series_request_queue.dispatch(can_request, request, now);
-}
 
 void Rest::process_response(web::rest::Response const &response, auto error_handler, auto success_handler) {
   try {

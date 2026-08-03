@@ -1,0 +1,19 @@
+{
+  "name": "roq/whitebit/protocol/json/BookTickerUpdate",
+  "type": "dictionary",
+  "values": [
+    {
+      "name": "id",
+      "type": "std/int64"
+    },
+    {
+      "name": "method",
+      "type": "roq/whitebit/protocol/json/Method"
+    },
+    {
+      "name": "data",
+      "type": "roq/whitebit/protocol/json/BookTickerUpdateParamsItem",
+      "array": "std/span"
+    }
+  ]
+}

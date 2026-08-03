@@ -1,0 +1,15 @@
+{
+  "name": "roq/whitebit/protocol/json/Type",
+  "type": "enum",
+  "values": [
+    {
+      "name": "spot"
+    },
+    {
+      "name": "futures"
+    },
+    {
+      "name": "tradfiFutures"
+    }
+  ]
+}

@@ -12,6 +12,8 @@
 #include "roq/whitebit/protocol/json/topic.hpp"
 #include "roq/whitebit/protocol/json/utils.hpp"
 
+#include "roq/whitebit/protocol/json/method.hpp"
+
 using namespace std::literals;
 
 namespace roq {
@@ -39,9 +41,6 @@ constexpr auto parse_mbp_depth(auto const &value) {
   auto sub = value.substr(pos1, pos2 - pos1);
   return utils::charconv::from_chars<uint32_t>(sub);
 }
-
-// static_assert(parse_mbp_depth("orderbook.1.xxx"sv) == 1);
-// static_assert(parse_mbp_depth("orderbook.50.xxx"sv) == 50);
 }  // namespace
 
 // === IMPLEMENTATION ===
@@ -56,19 +55,15 @@ bool Parser::dispatch(
       break;
     case UNKNOWN_INTERNAL:
       break;  // note! we only expect the topics we have subscribed to
+    case TICKERS:
+      dispatch_helper<BookTickerUpdate>(handler, message, buffer_stack, trace_info);
+      return true;
     case ORDERBOOK: {
-      auto mbp_depth = parse_mbp_depth(message_2.topic);
-      dispatch_helper<OrderBook>(handler, message, buffer_stack, trace_info, mbp_depth);
+      dispatch_helper<DepthUpdate>(handler, message, buffer_stack, trace_info);
       return true;
     }
     case PUBLIC_TRADE:
-      dispatch_helper<PublicTrade>(handler, message, buffer_stack, trace_info);
-      return true;
-    case TICKERS:
-      dispatch_helper<Tickers>(handler, message, buffer_stack, trace_info);
-      return true;
-    case KLINE:
-      dispatch_helper<Kline>(handler, message, buffer_stack, trace_info);
+      dispatch_helper<TradesUpdate>(handler, message, buffer_stack, trace_info);
       return true;
     case WALLET:
       dispatch_helper<Wallet>(handler, message, buffer_stack, trace_info);
@@ -96,7 +91,7 @@ bool Parser::dispatch(
       dispatch_helper<Auth>(handler, message, buffer_stack, trace_info);
       return true;
     case PING:
-      dispatch_helper<Ping>(handler, message, buffer_stack, trace_info);
+      dispatch_helper<Pong>(handler, message, buffer_stack, trace_info);
       return true;
     case PONG: {
       // note! drop (only the option api)

@@ -1,0 +1,19 @@
+{
+  "name": "roq/whitebit/protocol/json/DepthUpdate",
+  "type": "dictionary",
+  "values": [
+    {
+      "name": "id",
+      "type": "std/int64"
+    },
+    {
+      "name": "method",
+      "type": "roq/whitebit/protocol/json/Method"
+    },
+    {
+      "name": "params",
+      "type": "roq/whitebit/protocol/json/DepthUpdateParamsItem",
+      "array": "std/span"
+    }
+  ]
+}

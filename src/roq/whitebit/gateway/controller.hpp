@@ -19,16 +19,14 @@
 #include "roq/whitebit/gateway/settings.hpp"
 #include "roq/whitebit/gateway/shared.hpp"
 
-#include "roq/whitebit/gateway/drop_copy.hpp"
 #include "roq/whitebit/gateway/market_data.hpp"
-#include "roq/whitebit/gateway/order_entry.hpp"
 #include "roq/whitebit/gateway/rest.hpp"
 
 namespace roq {
 namespace whitebit {
 namespace gateway {
 
-struct Controller final : public server::Handler, public Rest::Handler, public OrderEntry::Handler, public DropCopy::Handler, public MarketData::Handler {
+struct Controller final : public server::Handler, public Rest::Handler, public MarketData::Handler {
   ROQ_PUBLIC static std::unique_ptr<server::Handler> create(server::Dispatcher &, Settings const &, Config const &, io::Context &);
 
   ROQ_PUBLIC static uint8_t parse_api(Settings const &);
@@ -75,10 +73,6 @@ struct Controller final : public server::Handler, public Rest::Handler, public O
 
   void operator()(Rest::SymbolsUpdate &) override;
 
-  // OrderEntry::Handler
-
-  void operator()(Trace<OrderEntry::Response> const &) override;
-
   // helpers
 
   void ensure_symbol_slices(size_t size);
@@ -88,12 +82,6 @@ struct Controller final : public server::Handler, public Rest::Handler, public O
 
   template <typename... Args>
   static void dispatch_helper(auto &self, Args &&...);
-
-  DropCopy &get_drop_copy(std::string_view const &account);
-
-  OrderEntry &get_order_entry_rest(std::string_view const &account);
-  OrderEntry &get_order_entry_ws(std::string_view const &account);
-  OrderEntry &get_order_entry(std::string_view const &account);
 
  private:
   server::Dispatcher &dispatcher_;
@@ -107,9 +95,6 @@ struct Controller final : public server::Handler, public Rest::Handler, public O
   uint16_t stream_id_ = {};
   // streams
   Rest rest_;
-  utils::unordered_map<std::string, std::unique_ptr<OrderEntry>> order_entry_rest_;
-  utils::unordered_map<std::string, std::unique_ptr<OrderEntry>> order_entry_ws_;
-  utils::unordered_map<std::string, std::unique_ptr<DropCopy>> drop_copy_;
   std::vector<std::unique_ptr<MarketData>> market_data_;
 };
 

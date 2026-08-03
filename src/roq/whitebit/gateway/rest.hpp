@@ -20,8 +20,7 @@
 
 #include "roq/whitebit/gateway/shared.hpp"
 
-#include "roq/whitebit/protocol/json/instruments_info_ack.hpp"
-#include "roq/whitebit/protocol/json/kline_ack.hpp"
+#include "roq/whitebit/protocol/json/market_info_ack.hpp"
 
 namespace roq {
 namespace whitebit {
@@ -59,7 +58,7 @@ struct Rest final : public web::rest::Client::Handler {
 
   enum class State {
     UNDEFINED = 0,
-    GET_INSTRUMENTS_INFO,
+    GET_MARKET_INFO,
     DONE,
   };
 
@@ -67,19 +66,11 @@ struct Rest final : public web::rest::Client::Handler {
 
   // instruments-info
 
-  void get_instruments_info();
-  void get_instruments_info_ack(Trace<web::rest::Response> const &, uint32_t sequence);
-  void operator()(Trace<protocol::json::InstrumentsInfoAck> const &);
-
-  // kline
-
-  void get_kline(std::string_view const &symbol);
-  void get_kline_ack(Trace<web::rest::Response> const &, std::string_view const &symbol);
-  void operator()(Trace<protocol::json::KlineAck> const &);
+  void get_market_info();
+  void get_market_info_ack(Trace<web::rest::Response> const &, uint32_t sequence);
+  void operator()(Trace<protocol::json::MarketInfoAck> const &);
 
   // helpers
-
-  void check_request_queue(std::chrono::nanoseconds now);
 
   void process_response(web::rest::Response const &, auto error_handler, auto success_handler);
 
@@ -97,7 +88,7 @@ struct Rest final : public web::rest::Client::Handler {
     utils::metrics::Counter disconnect;
   } counter_;
   struct {
-    utils::metrics::Profile instruments_info, instruments_info_ack, kline, kline_ack;
+    utils::metrics::Profile market_info, market_info_ack;
   } profile_;
   struct {
     utils::metrics::Latency ping;

@@ -1,5 +1,5 @@
 {
-  "name": "roq/whitebit/protocol/json/OrderBookLevel",
+  "name": "roq/whitebit/protocol/json/DepthUpdateParamsItemDataLevel",
   "type": "by_index",
   "values": [
     {
@@ -7,7 +7,7 @@
       "type": "std/double"
     },
     {
-      "name": "quantity",
+      "name": "amount",
       "type": "std/double"
     }
   ]

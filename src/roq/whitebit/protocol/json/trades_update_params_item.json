@@ -1,0 +1,15 @@
+{
+  "name": "roq/whitebit/protocol/json/TradesUpdateParamsItem",
+  "type": "by_index",
+  "values": [
+    {
+      "name": "name",
+      "type": "std/string_view"
+    },
+    {
+      "name": "data",
+      "type": "roq/whitebit/protocol/json/TradesUpdateParamsItemItem",
+      "array": "std/span"
+    }
+  ]
+}

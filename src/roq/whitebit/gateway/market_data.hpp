@@ -59,8 +59,8 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
   void operator()(ConnectionStatus, std::string_view const &reason = {});
 
   void subscribe(std::span<Symbol const> const &symbols);
-  void subscribe(std::string_view const &topic, std::span<Symbol const> const &symbols);
-  void subscribe(std::string_view const &topic, std::span<Symbol const> const &symbols, std::chrono::minutes interval);
+  void subscribe(std::string_view const &method, std::span<Symbol const> const &symbols);
+  void subscribe(std::string_view const &method, std::span<Symbol const> const &symbols, size_t limit);
 
   void send_ping(std::chrono::nanoseconds now);
 
@@ -68,16 +68,15 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
 
   // protocol::json::Parser::Handler
 
-  void operator()(Trace<protocol::json::Ping> const &) override;
+  void operator()(Trace<protocol::json::Pong> const &) override;
   // response
   void operator()(Trace<protocol::json::Auth> const &) override;
   void operator()(Trace<protocol::json::Subscribe> const &) override;
   void operator()(Trace<protocol::json::Error> const &) override;
   // public stream
-  void operator()(Trace<protocol::json::OrderBook> const &, size_t depth) override;
-  void operator()(Trace<protocol::json::PublicTrade> const &) override;
-  void operator()(Trace<protocol::json::Tickers> const &) override;
-  void operator()(Trace<protocol::json::Kline> const &) override;
+  void operator()(Trace<protocol::json::BookTickerUpdate> const &) override;
+  void operator()(Trace<protocol::json::DepthUpdate> const &) override;
+  void operator()(Trace<protocol::json::TradesUpdate> const &) override;
   // private stream
   void operator()(Trace<protocol::json::Wallet> const &) override;
   void operator()(Trace<protocol::json::Position> const &) override;
@@ -105,7 +104,7 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
     utils::metrics::Counter disconnect;
   } counter_;
   struct {
-    utils::metrics::Profile parse, order_book, trade, tickers, kline;
+    utils::metrics::Profile parse, book_ticker_update, depth_update, trades_update;
   } profile_;
   struct {
     utils::metrics::Latency ping, heartbeat;

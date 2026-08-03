@@ -197,15 +197,6 @@ Environments
    .. include:: flags/prod/flags.cfg
      :code: shell
 
-.. tab:: Test
-
-   .. code-block:: shell
-
-      $ --flagfile $CONDA_PREFIX/share/roq-whitebit/flags/test/flags.cfg
-
-   .. include:: flags/test/flags.cfg
-     :code: shell
-
 
 Configuration
 -------------
@@ -476,21 +467,8 @@ Outbound
 Comments
 --------
 
-* The gateway can not simultaneously support all product categories due to
-  overlapping symbol names, e.g. BTCUSDT being both spot and linear.
-  For this reason, the :code:`--api` flag controls the product category and, if
-  necessary, the :code:`--name` or :code:`--exchange` flags must be configured
-  to appropriately differentitate the sources.
-
-* The :code:`order` channel doesn't give us any information about last traded,
-  only the aggregate fields (traded / remaining / average price) are available.
-  The last trade price/quantity fields are therefore estimated.
-
-  .. note::
-     The :code:`execution` channel will independently report the fills.
-
-* :code:`TopOfBook` is based on :code:`orderbook.1` for spot and :code:`tickers`
-  for all other categories.
+* API market data subscription requires re-subscription of all symbols.
+  This means that new symbol discovery is a very heavy operation.
 
 
 References

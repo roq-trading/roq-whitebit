@@ -1,24 +1,33 @@
 set(TARGET_NAME ${PROJECT_NAME}-protocol-json)
 
-set(SOURCES encoder.cpp map.cpp parser.cpp parser_2.cpp utils.cpp)
+set(SOURCES encoder.cpp map.cpp parser.cpp utils.cpp)
 
 include(RoqAutogen)
 
 set(AUTOGEN_SCHEMAS
+    market_info_ack.json
+    market_info_ack_item.json
+    type.json
+    pong.json
+    method.json
+    trades_update.json
+    trades_update_params_item.json
+    trades_update_params_item_item.json
+    depth_update.json
+    depth_update_params_item.json
+    depth_update_params_item_data.json
+    depth_update_params_item_data_level.json
+    book_ticker_update_params_item.json
+    book_ticker_update.json
     account_info_ack.json
     account_info_ack_result.json
     account_type.json
-    amend_order2_data.json
-    amend_order2.json
     amend_order_ack.json
     amend_order_ack_result.json
-    auth2.json
     auth.json
     cancel_all_orders_ack.json
     cancel_all_orders_ack_result.json
     cancel_all_orders_ack_result_list_item.json
-    cancel_order2_data.json
-    cancel_order2.json
     cancel_order_ack.json
     cancel_order_ack_result.json
     cancel_type.json
@@ -32,23 +41,11 @@ set(AUTOGEN_SCHEMAS
     executions_ack.json
     executions_ack_result.json
     executions_ack_result_list_item.json
-    header2.json
-    instruments_info_ack.json
-    instruments_info_ack_result.json
-    instruments_info_ack_result_list_item.json
-    kline_ack.json
-    kline_ack_result.json
-    kline_ack_result_list_item.json
-    kline_item.json
-    kline.json
     leverage_filter.json
     lot_size_filter.json
     message.json
     operation.json
     options_type.json
-    order_book_data.json
-    order_book.json
-    order_book_level.json
     order_data_item.json
     order.json
     orders_ack.json
@@ -56,9 +53,6 @@ set(AUTOGEN_SCHEMAS
     orders_ack_result_list_item.json
     order_status.json
     order_type.json
-    ping.json
-    place_order2_data.json
-    place_order2.json
     place_order_ack.json
     place_order_ack_result.json
     position_data_item.json
@@ -68,8 +62,6 @@ set(AUTOGEN_SCHEMAS
     positions_ack_result_list_item.json
     position_status.json
     price_filter.json
-    public_trade_data.json
-    public_trade.json
     reject_reason.json
     side.json
     status.json
@@ -77,8 +69,6 @@ set(AUTOGEN_SCHEMAS
     subscribe_data.json
     subscribe.json
     tick_direction.json
-    tickers_data.json
-    tickers.json
     time_in_force.json
     topic.json
     tp_sl_mode.json

@@ -9,14 +9,13 @@
 #include "roq/core/json/buffer_stack.hpp"
 
 #include "roq/whitebit/protocol/json/error.hpp"
-#include "roq/whitebit/protocol/json/ping.hpp"
+#include "roq/whitebit/protocol/json/pong.hpp"
 #include "roq/whitebit/protocol/json/subscribe.hpp"
 
 // public
-#include "roq/whitebit/protocol/json/kline.hpp"
-#include "roq/whitebit/protocol/json/order_book.hpp"
-#include "roq/whitebit/protocol/json/public_trade.hpp"
-#include "roq/whitebit/protocol/json/tickers.hpp"
+#include "roq/whitebit/protocol/json/book_ticker_update.hpp"
+#include "roq/whitebit/protocol/json/depth_update.hpp"
+#include "roq/whitebit/protocol/json/trades_update.hpp"
 
 // private
 #include "roq/whitebit/protocol/json/auth.hpp"
@@ -32,16 +31,15 @@ namespace json {
 
 struct Parser final {
   struct Handler {
-    virtual void operator()(Trace<protocol::json::Ping> const &) = 0;
+    virtual void operator()(Trace<protocol::json::Pong> const &) = 0;
     // response
     virtual void operator()(Trace<protocol::json::Auth> const &) = 0;
     virtual void operator()(Trace<protocol::json::Subscribe> const &) = 0;
     virtual void operator()(Trace<protocol::json::Error> const &) = 0;
     // public stream
-    virtual void operator()(Trace<protocol::json::OrderBook> const &, size_t depth) = 0;
-    virtual void operator()(Trace<protocol::json::PublicTrade> const &) = 0;
-    virtual void operator()(Trace<protocol::json::Tickers> const &) = 0;
-    virtual void operator()(Trace<protocol::json::Kline> const &) = 0;
+    virtual void operator()(Trace<protocol::json::BookTickerUpdate> const &) = 0;
+    virtual void operator()(Trace<protocol::json::DepthUpdate> const &) = 0;
+    virtual void operator()(Trace<protocol::json::TradesUpdate> const &) = 0;
     // private stream
     virtual void operator()(Trace<protocol::json::Wallet> const &) = 0;
     virtual void operator()(Trace<protocol::json::Position> const &) = 0;

@@ -40,7 +40,7 @@ API API::create(Settings const &settings) {
   auto category = create_category(api);
   return {
       .market_data{
-          .instruments_info = "/v5/market/instruments-info"sv,
+          .market_info = "/api/v4/public/markets"sv,
           .kline = "/v5/market/kline"sv,
       },
       .simple{

@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "roq/whitebit/protocol/json/type.hpp"
+
 #include "roq/whitebit/protocol/json/contract_type.hpp"
 #include "roq/whitebit/protocol/json/event_type.hpp"
 #include "roq/whitebit/protocol/json/options_type.hpp"
@@ -23,6 +25,12 @@
 #include "roq/map.hpp"
 
 namespace roq {
+
+template <>
+template <>
+std::optional<SecurityType> Map<whitebit::protocol::json::Type>::helper() const;
+
+//
 
 template <>
 template <>

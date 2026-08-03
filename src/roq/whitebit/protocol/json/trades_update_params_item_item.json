@@ -1,0 +1,30 @@
+{
+  "name": "roq/whitebit/protocol/json/TradesUpdateParamsItemItem",
+  "type": "dictionary",
+  "values": [
+    {
+      "name": "id",
+      "type": "std/int64"
+    },
+    {
+      "name": "time",
+      "type": "std/milliseconds"
+    },
+    {
+      "name": "price",
+      "type": "std/double"
+    },
+    {
+      "name": "amount",
+      "type": "std/double"
+    },
+    {
+      "name": "type",
+      "type": "std/string_view"
+    },
+    {
+      "name": "rpi",
+      "type": "std/bool"
+    }
+  ]
+}

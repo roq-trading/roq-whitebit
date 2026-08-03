@@ -1,0 +1,15 @@
+{
+  "name": "roq/whitebit/protocol/json/Method",
+  "type": "enum",
+  "values": [
+    {
+      "name": "bookTicker_update"
+    },
+    {
+      "name": "depth_update"
+    },
+    {
+      "name": "trades_update"
+    }
+  ]
+}

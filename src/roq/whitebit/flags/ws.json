@@ -4,35 +4,13 @@
   "prefix": "ws_",
   "values": [
     {
-      "name": "public_uri",
+      "name": "uri",
       "type": "roq/io/web/URI",
       "validator": "roq/core/flags/URI",
       "description": "Exchange end-point"
     },
     {
-      "name": "public_host",
-      "type": "std/string",
-      "description": "Host (when URI is an IP address)"
-    },
-    {
-      "name": "private_uri",
-      "type": "roq/io/web/URI",
-      "validator": "roq/core/flags/URI",
-      "description": "Exchange end-point"
-    },
-    {
-      "name": "private_host",
-      "type": "std/string",
-      "description": "Host (when URI is an IP address)"
-    },
-    {
-      "name": "trade_uri",
-      "type": "roq/io/web/URI",
-      "validator": "roq/core/flags/URI",
-      "description": "Exchange end-point"
-    },
-    {
-      "name": "trade_host",
+      "name": "host",
       "type": "std/string",
       "description": "Host (when URI is an IP address)"
     },

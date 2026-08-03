@@ -1,0 +1,11 @@
+{
+  "name": "roq/whitebit/protocol/json/MarketInfoAck",
+  "type": "array",
+  "values": [
+    {
+      "name": "data",
+      "type": "roq/whitebit/protocol/json/MarketInfoAckItem",
+      "array": "std/span"
+    }
+  ]
+}

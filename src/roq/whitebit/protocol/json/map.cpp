@@ -13,6 +13,38 @@ using Helper = detail::MapHelper<Args...>;
 
 // whitebit::json => roq
 
+// whitebit::protocol::json::Type ==> roq::SecurityType
+
+template <>
+template <>
+constexpr Helper<whitebit::protocol::json::Type>::operator std::optional<roq::SecurityType>() const {
+  switch (std::get<0>(args_)) {
+    using enum whitebit::protocol::json::Type::type_t;
+    case UNDEFINED_INTERNAL:
+      return SecurityType::UNDEFINED;
+    case UNKNOWN_INTERNAL:
+      return SecurityType::UNDEFINED;
+    case SPOT:
+      return SecurityType::SPOT;
+    case FUTURES:
+      return SecurityType::FUTURES;
+    case TRADFI_FUTURES:
+      return SecurityType::FUTURES;
+  }
+  return {};
+}
+
+static_assert(Helper{whitebit::protocol::json::Type{whitebit::protocol::json::Type::UNDEFINED_INTERNAL}} == roq::SecurityType::UNDEFINED);
+static_assert(Helper{whitebit::protocol::json::Type{whitebit::protocol::json::Type::SPOT}} == roq::SecurityType::SPOT);
+static_assert(Helper{whitebit::protocol::json::Type{whitebit::protocol::json::Type::FUTURES}} == roq::SecurityType::FUTURES);
+static_assert(Helper{whitebit::protocol::json::Type{whitebit::protocol::json::Type::TRADFI_FUTURES}} == roq::SecurityType::FUTURES);
+
+template <>
+template <>
+std::optional<roq::SecurityType> Map<whitebit::protocol::json::Type>::helper() const {
+  return Helper{args_};
+}
+
 // whitebit::protocol::json::EventType ==> roq::UpdateType
 
 template <>

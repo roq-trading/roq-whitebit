@@ -36,8 +36,6 @@ struct Shared final {
   core::Symbols symbols;
   utils::unordered_set<std::string> all_symbols;
 
-  core::TimerQueue<std::string> time_series_request_queue;
-
   std::vector<MBPUpdate> bids, asks, final_bids, final_asks;
   std::vector<Trade> trades;
   std::vector<Bar> bars;
