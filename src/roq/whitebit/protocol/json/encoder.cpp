@@ -22,9 +22,9 @@ std::string_view Encoder::place_order(
     roq::CreateOrder const &create_order,
     server::oms::Order const &,
     server::oms::RefData const &ref_data,
-    std::string_view const &request_id,
-    Category category) {
+    std::string_view const &request_id) {
   buffer.clear();
+  /*
   auto side = map(create_order.side).template get<Side>();
   auto order_type = map(create_order.order_type).template get<OrderType>();
   auto time_in_force = map(create_order.time_in_force).template get<TimeInForce>();
@@ -54,6 +54,7 @@ std::string_view Encoder::place_order(
       R"(,"orderLinkId":"{}")"
       R"(}})"sv,
       request_id);
+  */
   return buffer;
 }
 
@@ -63,9 +64,9 @@ std::string_view Encoder::amend_order(
     server::oms::Order const &order,
     server::oms::RefData const &ref_data,
     [[maybe_unused]] std::string_view const &request_id,
-    std::string_view const &previous_request_id,
-    Category category) {
+    std::string_view const &previous_request_id) {
   buffer.clear();
+  /*
   fmt::format_to(
       std::back_inserter(buffer),
       R"({{)"
@@ -92,6 +93,7 @@ std::string_view Encoder::amend_order(
         R"(}})"sv,
         previous_request_id);  // XXX not correct -- we need original request_id
   }
+  */
   return buffer;
 }
 
@@ -101,9 +103,9 @@ std::string_view Encoder::cancel_order(
     server::oms::Order const &order,
     server::oms::RefData const &,
     [[maybe_unused]] std::string_view const &request_id,
-    std::string_view const &previous_request_id,
-    Category category) {
+    std::string_view const &previous_request_id) {
   buffer.clear();
+  /*
   fmt::format_to(
       std::back_inserter(buffer),
       R"({{)"
@@ -124,12 +126,14 @@ std::string_view Encoder::cancel_order(
         R"(}})"sv,
         previous_request_id);  // XXX not correct -- we need original request_id
   }
+  */
   return buffer;
 }
 
 std::string_view Encoder::cancel_all_orders(
-    std::string &buffer, roq::CancelAllOrders const &, [[maybe_unused]] std::string_view const &request_id, std::string_view const &symbol, Category category) {
+    std::string &buffer, roq::CancelAllOrders const &, [[maybe_unused]] std::string_view const &request_id, std::string_view const &symbol) {
   buffer.clear();
+  /*
   fmt::format_to(
       std::back_inserter(buffer),
       R"({{)"
@@ -138,6 +142,7 @@ std::string_view Encoder::cancel_all_orders(
       R"(}})"sv,
       category.as_raw_text(),
       symbol);
+  */
   return buffer;
 }
 
@@ -149,10 +154,10 @@ std::string_view Encoder::place_order_ws(
     server::oms::Order const &,
     server::oms::RefData const &ref_data,
     std::string_view const &request_id,
-    Category category,
     std::chrono::milliseconds now_utc,
     std::chrono::milliseconds recv_window) {
   buffer.clear();
+  /*
   auto side = map(create_order.side).template get<Side>();
   auto order_type = map(create_order.order_type).template get<OrderType>();
   auto time_in_force = map(create_order.time_in_force).template get<TimeInForce>();
@@ -194,6 +199,7 @@ std::string_view Encoder::place_order_ws(
       R"(}})"sv,
       request_id,
       request_id);
+  */
   return buffer;
 }
 
@@ -204,10 +210,10 @@ std::string_view Encoder::amend_order_ws(
     server::oms::RefData const &ref_data,
     [[maybe_unused]] std::string_view const &request_id,
     std::string_view const &previous_request_id,
-    Category category,
     std::chrono::milliseconds now_utc,
     std::chrono::milliseconds recv_window) {
   buffer.clear();
+  /*
   fmt::format_to(
       std::back_inserter(buffer),
       R"({{)"
@@ -242,6 +248,7 @@ std::string_view Encoder::amend_order_ws(
       R"("reqId":"{}")"
       R"(}})"sv,
       request_id);
+  */
   return buffer;
 }
 
@@ -252,10 +259,10 @@ std::string_view Encoder::cancel_order_ws(
     server::oms::RefData const &,
     [[maybe_unused]] std::string_view const &request_id,
     std::string_view const &previous_request_id,
-    Category category,
     std::chrono::milliseconds now_utc,
     std::chrono::milliseconds recv_window) {
   buffer.clear();
+  /*
   fmt::format_to(
       std::back_inserter(buffer),
       R"({{)"
@@ -284,6 +291,7 @@ std::string_view Encoder::cancel_order_ws(
       R"("reqId":"{}")"
       R"(}})"sv,
       request_id);
+  */
   return buffer;
 }
 

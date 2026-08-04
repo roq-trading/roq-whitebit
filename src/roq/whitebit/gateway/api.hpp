@@ -8,8 +8,6 @@
 
 #include "roq/whitebit/tools/api.hpp"
 
-#include "roq/whitebit/protocol/json/category.hpp"
-
 namespace roq {
 namespace whitebit {
 namespace gateway {
@@ -33,7 +31,6 @@ struct API final {
   } simple;
 
   tools::API api;
-  protocol::json::Category category;
 
   // factory
   static API create(Settings const &);

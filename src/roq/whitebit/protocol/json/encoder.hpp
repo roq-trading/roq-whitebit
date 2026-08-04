@@ -13,8 +13,6 @@
 #include "roq/server/oms/order.hpp"
 #include "roq/server/oms/ref_data.hpp"
 
-#include "roq/whitebit/protocol/json/category.hpp"
-
 namespace roq {
 namespace whitebit {
 namespace protocol {
@@ -24,7 +22,7 @@ struct Encoder final {
   // REST
 
   static std::string_view place_order(
-      std::string &buffer, roq::CreateOrder const &, server::oms::Order const &, server::oms::RefData const &, std::string_view const &request_id, Category);
+      std::string &buffer, roq::CreateOrder const &, server::oms::Order const &, server::oms::RefData const &, std::string_view const &request_id);
 
   static std::string_view amend_order(
       std::string &buffer,
@@ -32,8 +30,7 @@ struct Encoder final {
       server::oms::Order const &,
       server::oms::RefData const &,
       std::string_view const &request_id,
-      std::string_view const &previous_request_id,
-      Category);
+      std::string_view const &previous_request_id);
 
   static std::string_view cancel_order(
       std::string &buffer,
@@ -41,11 +38,10 @@ struct Encoder final {
       server::oms::Order const &,
       server::oms::RefData const &,
       std::string_view const &request_id,
-      std::string_view const &previous_request_id,
-      Category);
+      std::string_view const &previous_request_id);
 
   static std::string_view cancel_all_orders(
-      std::string &buffer, roq::CancelAllOrders const &, std::string_view const &request_id, std::string_view const &symbol, Category);
+      std::string &buffer, roq::CancelAllOrders const &, std::string_view const &request_id, std::string_view const &symbol);
 
   // WS
 
@@ -55,7 +51,6 @@ struct Encoder final {
       server::oms::Order const &,
       server::oms::RefData const &,
       std::string_view const &request_id,
-      Category,
       std::chrono::milliseconds now_utc,
       std::chrono::milliseconds recv_window);
 
@@ -66,7 +61,6 @@ struct Encoder final {
       server::oms::RefData const &,
       std::string_view const &request_id,
       std::string_view const &previous_request_id,
-      Category,
       std::chrono::milliseconds now_utc,
       std::chrono::milliseconds recv_window);
 
@@ -77,7 +71,6 @@ struct Encoder final {
       server::oms::RefData const &,
       std::string_view const &request_id,
       std::string_view const &previous_request_id,
-      Category,
       std::chrono::milliseconds now_utc,
       std::chrono::milliseconds recv_window);
 };

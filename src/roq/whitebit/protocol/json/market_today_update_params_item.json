@@ -1,0 +1,14 @@
+{
+  "name": "roq/whitebit/protocol/json/MarketTodayUpdateParamsItem",
+  "type": "by_index",
+  "values": [
+    {
+      "name": "name",
+      "type": "std/string_view"
+    },
+    {
+      "name": "data",
+      "type": "roq/whitebit/protocol/json/MarketTodayUpdateParamsItemItem"
+    }
+  ]
+}

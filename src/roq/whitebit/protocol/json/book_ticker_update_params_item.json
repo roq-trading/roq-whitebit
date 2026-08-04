@@ -3,36 +3,8 @@
   "type": "by_index",
   "values": [
     {
-      "name": "transaction_time",
-      "type": "std/milliseconds"
-    },
-    {
-      "name": "message_time",
-      "type": "std/milliseconds"
-    },
-    {
-      "name": "market",
-      "type": "std/string_view"
-    },
-    {
-      "name": "update_id",
-      "type": "std/int64"
-    },
-    {
-      "name": "best_bid_price",
-      "type": "std/double"
-    },
-    {
-      "name": "best_bid_amount",
-      "type": "std/double"
-    },
-    {
-      "name": "best_ask_price",
-      "type": "std/double"
-    },
-    {
-      "name": "best_ask_amount",
-      "type": "std/double"
+      "name": "data",
+      "type": "roq/whitebit/protocol/json/BookTickerUpdateParamsItemItem"
     }
   ]
 }

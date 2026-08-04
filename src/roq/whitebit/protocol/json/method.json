@@ -10,6 +10,12 @@
     },
     {
       "name": "trades_update"
+    },
+    {
+      "name": "market_update"
+    },
+    {
+      "name": "marketToday_update"
     }
   ]
 }

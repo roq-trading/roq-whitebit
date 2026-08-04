@@ -1,5 +1,5 @@
 {
-  "name": "roq/whitebit/protocol/json/Pong",
+  "name": "roq/whitebit/protocol/json/Response",
   "type": "dictionary",
   "values": [
     {
@@ -8,7 +8,7 @@
     },
     {
       "name": "result",
-      "type": "std/string_view"
+      "type": "roq/whitebit/protocol/json/Result"
     },
     {
       "name": "id",

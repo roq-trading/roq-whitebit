@@ -12,8 +12,7 @@
     },
     {
       "name": "params",
-      "type": "roq/whitebit/protocol/json/DepthUpdateParamsItem",
-      "array": "std/span"
+      "type": "roq/whitebit/protocol/json/DepthUpdateParamsItem"
     }
   ]
 }

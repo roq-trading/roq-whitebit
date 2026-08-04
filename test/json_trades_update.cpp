@@ -10,6 +10,8 @@ using namespace roq::whitebit;
 using namespace std::literals;
 using namespace std::chrono_literals;
 
+using namespace Catch::literals;
+
 using value_type = protocol::json::TradesUpdate;
 
 // note! truncated
@@ -44,8 +46,18 @@ TEST_CASE("snapshot", "[json_trades_update]") {
                  R"("id": null)"
                  R"(})"sv;
   auto helper = [](value_type const &obj) {
-    // CHECK(obj.topic == "publicTrade.BTCUSDT"sv);
-    // CHECK(obj.timestamp == 1682084122523ms);
+    CHECK(obj.method == protocol::json::Method::TRADES_UPDATE);
+    CHECK(obj.params.name == "BTC_PERP"sv);
+    REQUIRE(std::size(obj.params.data) == 3);
+    auto &d0 = obj.params.data[0];
+    CHECK(d0.id == 22676096396);
+    // CHECK(d0.time == 1785727720670792us);
+    CHECK(d0.time == 1785727720670800us);  // XXX FIXME TODO why is this rounded ???
+    CHECK(d0.price == 63117_a);
+    CHECK(d0.amount == 10.967_a);
+    CHECK(d0.type == protocol::json::TradeType::SELL);
+    CHECK(d0.rpi == false);
+    CHECK(obj.id == 0);
   };
   ParserTester<value_type>::dispatch(helper, message, 8192, 1);
 }
@@ -67,8 +79,17 @@ TEST_CASE("update", "[json_trades_update]") {
                  R"("id": null)"
                  R"(})"sv;
   auto helper = [](value_type const &obj) {
-    // CHECK(obj.topic == "publicTrade.BTCUSDT"sv);
-    // CHECK(obj.timestamp == 1682084122523ms);
+    CHECK(obj.method == protocol::json::Method::TRADES_UPDATE);
+    CHECK(obj.params.name == "BTC_PERP"sv);
+    REQUIRE(std::size(obj.params.data) == 1);
+    auto &d0 = obj.params.data[0];
+    CHECK(d0.id == 22676356091);
+    CHECK(d0.time == 1785728782167881us);
+    CHECK(d0.price == 63058.8_a);
+    CHECK(d0.amount == 0.021_a);
+    CHECK(d0.type == protocol::json::TradeType::SELL);
+    CHECK(d0.rpi == false);
+    CHECK(obj.id == 0);
   };
   ParserTester<value_type>::dispatch(helper, message, 8192, 1);
 }

@@ -70,18 +70,14 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
 
   void operator()(Trace<protocol::json::Pong> const &) override;
   // response
-  void operator()(Trace<protocol::json::Auth> const &) override;
-  void operator()(Trace<protocol::json::Subscribe> const &) override;
-  void operator()(Trace<protocol::json::Error> const &) override;
+  void operator()(Trace<protocol::json::Response> const &) override;
   // public stream
   void operator()(Trace<protocol::json::BookTickerUpdate> const &) override;
   void operator()(Trace<protocol::json::DepthUpdate> const &) override;
   void operator()(Trace<protocol::json::TradesUpdate> const &) override;
+  void operator()(Trace<protocol::json::MarketUpdate> const &) override;
+  void operator()(Trace<protocol::json::MarketTodayUpdate> const &) override;
   // private stream
-  void operator()(Trace<protocol::json::Wallet> const &) override;
-  void operator()(Trace<protocol::json::Position> const &) override;
-  void operator()(Trace<protocol::json::Order> const &) override;
-  void operator()(Trace<protocol::json::Execution> const &) override;
 
  private:
   [[maybe_unused]] Handler &handler_;
@@ -104,7 +100,7 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
     utils::metrics::Counter disconnect;
   } counter_;
   struct {
-    utils::metrics::Profile parse, book_ticker_update, depth_update, trades_update;
+    utils::metrics::Profile parse, response, book_ticker_update, depth_update, trades_update, market_update, market_today_update;
   } profile_;
   struct {
     utils::metrics::Latency ping, heartbeat;

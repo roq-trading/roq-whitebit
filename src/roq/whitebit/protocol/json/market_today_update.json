@@ -1,5 +1,5 @@
 {
-  "name": "roq/whitebit/protocol/json/BookTickerUpdate",
+  "name": "roq/whitebit/protocol/json/MarketTodayUpdate",
   "type": "dictionary",
   "values": [
     {
@@ -12,7 +12,7 @@
     },
     {
       "name": "params",
-      "type": "roq/whitebit/protocol/json/BookTickerUpdateParamsItem"
+      "type": "roq/whitebit/protocol/json/MarketTodayUpdateParamsItem"
     }
   ]
 }

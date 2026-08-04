@@ -12,8 +12,7 @@
     },
     {
       "name": "params",
-      "type": "roq/whitebit/protocol/json/TradesUpdateParamsItem",
-      "array": "std/span"
+      "type": "roq/whitebit/protocol/json/TradesUpdateParamsItem"
     }
   ]
 }

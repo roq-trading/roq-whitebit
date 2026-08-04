@@ -30,16 +30,12 @@ struct ParserTester final : public protocol::json::Parser::Handler {
   explicit ParserTester(callback_type const &callback) : callback_{callback} {}
 
   void operator()(Trace<protocol::json::Pong> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Auth> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Subscribe> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Error> const &event) override { dispatch_helper(event); }
+  void operator()(Trace<protocol::json::Response> const &event) override { dispatch_helper(event); }
   void operator()(Trace<protocol::json::BookTickerUpdate> const &event) override { dispatch_helper(event); }
   void operator()(Trace<protocol::json::DepthUpdate> const &event) override { dispatch_helper(event); }
   void operator()(Trace<protocol::json::TradesUpdate> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Wallet> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Position> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Order> const &event) override { dispatch_helper(event); }
-  void operator()(Trace<protocol::json::Execution> const &event) override { dispatch_helper(event); }
+  void operator()(Trace<protocol::json::MarketUpdate> const &event) override { dispatch_helper(event); }
+  void operator()(Trace<protocol::json::MarketTodayUpdate> const &event) override { dispatch_helper(event); }
 
   /* XXX FIXME TODO
   template <typename U, typename... Args>

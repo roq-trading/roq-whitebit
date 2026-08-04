@@ -120,9 +120,12 @@ MarketData::MarketData(Handler &handler, io::Context &context, uint16_t stream_i
       },
       profile_{
           .parse = create_metrics(shared.settings, name_, "parse"sv),
+          .response = create_metrics(shared.settings, name_, "response"sv),
           .book_ticker_update = create_metrics(shared.settings, name_, "book_ticker_update"sv),
           .depth_update = create_metrics(shared.settings, name_, "depth_update"sv),
           .trades_update = create_metrics(shared.settings, name_, "trades_update"sv),
+          .market_update = create_metrics(shared.settings, name_, "market_update"sv),
+          .market_today_update = create_metrics(shared.settings, name_, "market_today_update"sv),
       },
       latency_{
           .ping = create_metrics(shared.settings, name_, "ping"sv),
@@ -153,9 +156,12 @@ void MarketData::operator()(metrics::Writer &writer) const {
       .write(counter_.disconnect, metrics::Type::COUNTER)
       // profile
       .write(profile_.parse, metrics::Type::PROFILE)
+      .write(profile_.response, metrics::Type::PROFILE)
       .write(profile_.book_ticker_update, metrics::Type::PROFILE)
       .write(profile_.depth_update, metrics::Type::PROFILE)
       .write(profile_.trades_update, metrics::Type::PROFILE)
+      .write(profile_.market_update, metrics::Type::PROFILE)
+      .write(profile_.market_today_update, metrics::Type::PROFILE)
       // latency
       .write(latency_.ping, metrics::Type::LATENCY)
       .write(latency_.heartbeat, metrics::Type::LATENCY);
@@ -231,6 +237,8 @@ void MarketData::subscribe(std::span<Symbol const> const &symbols) {
   subscribe("bookTicker_subscribe"sv, symbols);
   subscribe("depth_subscribe"sv, symbols, 100);  // XXX FIXME TODO limit=100 from settings
   subscribe("trades_subscribe"sv, symbols);
+  subscribe("market_subscribe"sv, symbols);
+  subscribe("marketToday_subscribe"sv, symbols);
 }
 
 void MarketData::subscribe(std::string_view const &method, std::span<Symbol const> const &symbols) {
@@ -273,21 +281,18 @@ void MarketData::subscribe(std::string_view const &method, std::span<Symbol cons
 
 void MarketData::send_ping(std::chrono::nanoseconds now) {
   assert(ping_frequency_.count() > 0);
-  next_ping_ = now + ping_frequency_ / 2;
+  next_ping_ = now + ping_frequency_;
   auto message = fmt::format(
       R"({{)"
-      R"("id":{},)"
+      R"("id":0,)"
       R"("method":"ping",)"
       R"("params":[])"
-      R"(}})"sv,
-      now.count());
+      R"(}})"sv);
   log::debug("{}"sv, message);
   (*connection_).send_text(message);
 }
 
 void MarketData::parse(std::string_view const &message) {
-  log::debug("{}"sv, message);
-  return;
   profile_.parse([&]() {
     auto log_message = [&]() { log::warn(R"(*** PLEASE REPORT *** message="{}")"sv, message); };
     try {
@@ -304,27 +309,27 @@ void MarketData::parse(std::string_view const &message) {
 
 void MarketData::operator()(Trace<protocol::json::Pong> const &event) {
   auto &[trace_info, pong] = event;
+  log::debug("pong={}"sv, pong);
   log::info<4>("pong={}"sv, pong);
+  (*connection_).touch(trace_info.source_receive_time);
 }
 
-void MarketData::operator()(Trace<protocol::json::Auth> const &) {
-  log::fatal("Unexpected"sv);
-}
-
-void MarketData::operator()(Trace<protocol::json::Subscribe> const &event) {
-  auto &[trace_info, subscribe] = event;
-  log::info<4>("subscribe={}"sv, subscribe);
-}
-
-void MarketData::operator()(Trace<protocol::json::Error> const &event) {
-  auto &[trace_info, error] = event;
-  log::info<4>("error={}"sv, error);
-  log::fatal("error={}"sv, error);
+void MarketData::operator()(Trace<protocol::json::Response> const &event) {
+  profile_.response([&]() {
+    auto &[trace_info, response] = event;
+    log::debug("response={}"sv, response);
+    log::info<3>("response={}"sv, response);
+    (*connection_).touch(trace_info.source_receive_time);
+    if (response.error.code) {
+      log::error("response={}"sv, response);
+    }
+  });
 }
 
 void MarketData::operator()(Trace<protocol::json::BookTickerUpdate> const &event) {
   profile_.book_ticker_update([&]() {
     auto &[trace_info, book_ticker_update] = event;
+    log::debug("book_ticker_update={}"sv, book_ticker_update);
     log::info<3>("book_ticker_update={}"sv, book_ticker_update);
     (*connection_).touch(trace_info.source_receive_time);
     /*
@@ -420,6 +425,7 @@ void MarketData::operator()(Trace<protocol::json::BookTickerUpdate> const &event
 void MarketData::operator()(Trace<protocol::json::DepthUpdate> const &event) {
   profile_.depth_update([&]() {
     auto &[trace_info, depth_update] = event;
+    log::debug("depth_update={}"sv, depth_update);
     log::info<3>("depth_update={}"sv, depth_update);
     (*connection_).touch(trace_info.source_receive_time);
     /*
@@ -503,6 +509,7 @@ void MarketData::operator()(Trace<protocol::json::DepthUpdate> const &event) {
 void MarketData::operator()(Trace<protocol::json::TradesUpdate> const &event) {
   profile_.trades_update([&]() {
     auto &[trace_info, trades_update] = event;
+    log::debug("trades_update={}"sv, trades_update);
     log::info<3>("trades_update={}"sv, trades_update);
     (*connection_).touch(trace_info.source_receive_time);
     /*
@@ -551,20 +558,22 @@ void MarketData::operator()(Trace<protocol::json::TradesUpdate> const &event) {
   });
 }
 
-void MarketData::operator()(Trace<protocol::json::Wallet> const &) {
-  log::fatal("Unexpected"sv);
+void MarketData::operator()(Trace<protocol::json::MarketUpdate> const &event) {
+  profile_.market_update([&]() {
+    auto &[trace_info, market_update] = event;
+    log::debug("market_update={}"sv, market_update);
+    log::info<3>("market_update={}"sv, market_update);
+    (*connection_).touch(trace_info.source_receive_time);
+  });
 }
 
-void MarketData::operator()(Trace<protocol::json::Position> const &) {
-  log::fatal("Unexpected"sv);
-}
-
-void MarketData::operator()(Trace<protocol::json::Order> const &) {
-  log::fatal("Unexpected"sv);
-}
-
-void MarketData::operator()(Trace<protocol::json::Execution> const &) {
-  log::fatal("Unexpected"sv);
+void MarketData::operator()(Trace<protocol::json::MarketTodayUpdate> const &event) {
+  profile_.market_today_update([&]() {
+    auto &[trace_info, market_today_update] = event;
+    log::debug("market_today_update={}"sv, market_today_update);
+    log::info<3>("market_today_update={}"sv, market_today_update);
+    (*connection_).touch(trace_info.source_receive_time);
+  });
 }
 
 }  // namespace gateway

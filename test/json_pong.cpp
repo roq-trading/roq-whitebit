@@ -19,9 +19,10 @@ TEST_CASE("simple", "[json_pong]") {
                  R"("id": 177472028786210)"
                  R"(})"sv;
   auto helper = [](value_type const &obj) {
-    CHECK(obj.id == 177472028786210);
+    CHECK(obj.error.code == 0);
+    CHECK(std::empty(obj.error.message));
     CHECK(obj.result == "pong"sv);
-    // error
+    CHECK(obj.id == 177472028786210);
   };
   ParserTester<value_type>::dispatch(helper, message, 8192, 1);
 }

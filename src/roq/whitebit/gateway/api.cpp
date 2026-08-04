@@ -12,32 +12,10 @@ namespace roq {
 namespace whitebit {
 namespace gateway {
 
-// === HELPERS ===
-
-namespace {
-auto create_category(auto api) -> protocol::json::Category {
-  switch (api) {
-    using enum tools::API;
-    case UNDEFINED:
-      break;
-    case SPOT:
-      return protocol::json::Category::SPOT;
-    case LINEAR:
-      return protocol::json::Category::LINEAR;
-    case INVERSE:
-      return protocol::json::Category::INVERSE;
-    case OPTION:
-      return protocol::json::Category::OPTION;
-  }
-  log::fatal("Unexpected"sv);
-}
-}  // namespace
-
 // === IMPLEMENTATION ===
 
 API API::create(Settings const &settings) {
   auto api = parse_api(settings.app.api);
-  auto category = create_category(api);
   return {
       .market_data{
           .market_info = "/api/v4/public/markets"sv,
@@ -55,7 +33,6 @@ API API::create(Settings const &settings) {
           .order_cancel_all = "/v5/order/cancel-all"sv,
       },
       .api = api,
-      .category = category,
   };
 }
 

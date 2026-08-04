@@ -29,8 +29,10 @@ TEST_CASE("simple", "[json_book_ticker_update]") {
                  R"("id": null)"
                  R"(})"sv;
   auto helper = [](value_type const &obj) {
-    // CHECK(obj.topic == "tickers.BTCUSDT"sv);
-    // CHECK(obj.timestamp == 1682083233096ms);
+    CHECK(obj.method == protocol::json::Method::BOOK_TICKER_UPDATE);
+    // REQUIRE(std::size(obj.params) == 1);
+    // auto &p0 = obj.params[0];
+    CHECK(obj.id == 0);
   };
-  ParserTester<value_type>::dispatch(helper, message, 8192, 1);
+  ParserTester<value_type>::dispatch(helper, message, 8192, 2);
 }
