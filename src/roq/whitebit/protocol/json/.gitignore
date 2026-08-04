@@ -2,7 +2,6 @@
 roq-whitebit-protocol-json
 book_ticker_update.hpp
 book_ticker_update_params_item.hpp
-book_ticker_update_params_item_item.hpp
 depth_update.hpp
 depth_update_params_item.hpp
 depth_update_params_item_data.hpp
@@ -27,7 +26,6 @@ trades_update_params_item_item.hpp
 type.hpp
 book_ticker_update.cpp
 book_ticker_update_params_item.cpp
-book_ticker_update_params_item_item.cpp
 depth_update.cpp
 depth_update_params_item.cpp
 depth_update_params_item_data.cpp

@@ -288,7 +288,6 @@ void MarketData::send_ping(std::chrono::nanoseconds now) {
       R"("method":"ping",)"
       R"("params":[])"
       R"(}})"sv);
-  log::debug("{}"sv, message);
   (*connection_).send_text(message);
 }
 
@@ -309,7 +308,6 @@ void MarketData::parse(std::string_view const &message) {
 
 void MarketData::operator()(Trace<protocol::json::Pong> const &event) {
   auto &[trace_info, pong] = event;
-  log::debug("pong={}"sv, pong);
   log::info<4>("pong={}"sv, pong);
   (*connection_).touch(trace_info.source_receive_time);
 }
@@ -317,7 +315,6 @@ void MarketData::operator()(Trace<protocol::json::Pong> const &event) {
 void MarketData::operator()(Trace<protocol::json::Response> const &event) {
   profile_.response([&]() {
     auto &[trace_info, response] = event;
-    log::debug("response={}"sv, response);
     log::info<3>("response={}"sv, response);
     (*connection_).touch(trace_info.source_receive_time);
     if (response.error.code) {
@@ -329,80 +326,150 @@ void MarketData::operator()(Trace<protocol::json::Response> const &event) {
 void MarketData::operator()(Trace<protocol::json::BookTickerUpdate> const &event) {
   profile_.book_ticker_update([&]() {
     auto &[trace_info, book_ticker_update] = event;
-    log::debug("book_ticker_update={}"sv, book_ticker_update);
     log::info<3>("book_ticker_update={}"sv, book_ticker_update);
     (*connection_).touch(trace_info.source_receive_time);
-    /*
-    auto &data = book_ticker_update.data;
-    switch (shared_.api.api) {
-      using enum tools::API;
-      case UNDEFINED:
-        break;
-      case SPOT:
-        // note! using orderbook.1
-        break;
-      case LINEAR:
-      case INVERSE: {
-        auto top_of_book = TopOfBook{
-            .stream_id = stream_id_,
-            .exchange = shared_.settings.exchange,
-            .symbol = data.symbol,
-            .layer{
-                .bid_price = data.bid1_price,
-                .bid_quantity = data.bid1_size,
-                .ask_price = data.ask1_price,
-                .ask_quantity = data.ask1_size,
-            },
-            .update_type = UpdateType::INCREMENTAL,
-            .exchange_time_utc = {},
-            .exchange_sequence = tickers.cross_sequence,
-            .sending_time_utc = tickers.timestamp,
-        };
-        create_trace_and_dispatch(shared_.dispatcher, trace_info, top_of_book, true);
-        break;
-      }
-      case OPTION: {
-        auto top_of_book = TopOfBook{
-            .stream_id = stream_id_,
-            .exchange = shared_.settings.exchange,
-            .symbol = data.symbol,
-            .layer{
-                .bid_price = data.bid_price,
-                .bid_quantity = data.bid_size,
-                .ask_price = data.ask_price,
-                .ask_quantity = data.ask_size,
-            },
-            .update_type = UpdateType::INCREMENTAL,
-            .exchange_time_utc = {},
-            .exchange_sequence = tickers.cross_sequence,
-            .sending_time_utc = tickers.timestamp,
-        };
-        create_trace_and_dispatch(shared_.dispatcher, trace_info, top_of_book, true);
-        break;
-      }
+    for (auto &item : book_ticker_update.params) {
+      auto top_of_book = TopOfBook{
+          .stream_id = stream_id_,
+          .exchange = shared_.settings.exchange,
+          .symbol = item.market,
+          .layer{
+              .bid_price = item.best_bid_price,
+              .bid_quantity = item.best_bid_amount,
+              .ask_price = item.best_ask_price,
+              .ask_quantity = item.best_ask_amount,
+          },
+          .update_type = UpdateType::INCREMENTAL,
+          .exchange_time_utc = item.transaction_time,
+          .exchange_sequence = utils::safe_cast(item.update_id),
+          .sending_time_utc = item.message_time,
+      };
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, top_of_book, true);
     }
-    std::array<Statistics, 4> statistics{{
+  });
+}
+
+void MarketData::operator()(Trace<protocol::json::DepthUpdate> const &event) {
+  profile_.depth_update([&]() {
+    auto &[trace_info, depth_update] = event;
+    log::info<3>("depth_update={}"sv, depth_update);
+    (*connection_).touch(trace_info.source_receive_time);
+    auto helper = [&](auto &result, auto &item) {
+      auto mbp_update = MBPUpdate{
+          .price = item.price,
+          .quantity = item.amount,
+          .implied_quantity = NaN,
+          .number_of_orders = {},
+          .update_action = {},
+          .price_level = {},
+      };
+      result.emplace_back(std::move(mbp_update));
+    };
+    shared_.bids.clear();
+    shared_.asks.clear();
+    for (auto &item : depth_update.params.data.bids) {
+      helper(shared_.bids, item);
+    }
+    for (auto &item : depth_update.params.data.asks) {
+      helper(shared_.asks, item);
+    }
+    auto update_type = [&]() {
+      if (depth_update.params.snapshot) {
+        return UpdateType::SNAPSHOT;
+      }
+      return UpdateType::INCREMENTAL;
+    }();
+    auto market_by_price_update = MarketByPriceUpdate{
+        .stream_id = stream_id_,
+        .exchange = shared_.settings.exchange,
+        .symbol = depth_update.params.name,
+        .bids = shared_.bids,
+        .asks = shared_.asks,
+        .update_type = update_type,
+        .exchange_time_utc = depth_update.params.data.timestamp,
+        .exchange_sequence = utils::safe_cast(depth_update.params.data.update_id),
+        .sending_time_utc = {},
+        .price_precision = {},
+        .quantity_precision = {},
+        .checksum = {},
+    };
+    try {
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, market_by_price_update, true, shared_.final_bids, shared_.final_asks);
+    } catch (BadState &) {
+      log::fatal("HERE"sv);
+    }
+  });
+}
+
+// XXX FIXME TODO drop snapshot
+void MarketData::operator()(Trace<protocol::json::TradesUpdate> const &event) {
+  profile_.trades_update([&]() {
+    auto &[trace_info, trades_update] = event;
+    log::info<3>("trades_update={}"sv, trades_update);
+    (*connection_).touch(trace_info.source_receive_time);
+    auto &trades = shared_.trades;
+    trades.clear();
+    for (auto &item : trades_update.params.data) {
+      auto trade = Trade{
+          .side = map(item.type),
+          .price = item.price,
+          .quantity = item.amount,
+          .trade_id = {},  // note!
+          .taker_order_id = {},
+          .maker_order_id = {},
+      };
+      fmt::format_to(std::back_inserter(trade.trade_id), "{}"sv, item.id);
+      trades.emplace_back(std::move(trade));
+    }
+    if (!std::empty(trades)) {
+      auto trade_summary = TradeSummary{
+          .stream_id = stream_id_,
+          .exchange = shared_.settings.exchange,
+          .symbol = trades_update.params.name,
+          .trades = trades,
+          .exchange_time_utc = {},
+          .exchange_sequence = {},
+          .sending_time_utc = {},
+      };
+      create_trace_and_dispatch(shared_.dispatcher, trace_info, trade_summary, true);
+      trades.clear();
+    }
+  });
+}
+
+void MarketData::operator()(Trace<protocol::json::MarketUpdate> const &event) {
+  profile_.market_update([&]() {
+    auto &[trace_info, market_update] = event;
+    log::info<3>("market_update={}"sv, market_update);
+    (*connection_).touch(trace_info.source_receive_time);
+    std::array<Statistics, 5> statistics{{
+        {
+            .type = StatisticsType::OPEN_PRICE,
+            .value = market_update.params.data.high,
+            .begin_time_utc = {},
+            .end_time_utc = {},
+        },
         {
             .type = StatisticsType::HIGHEST_TRADED_PRICE,
-            .value = data.high_price24h,
+            .value = market_update.params.data.high,
             .begin_time_utc = {},
             .end_time_utc = {},
         },
         {
             .type = StatisticsType::LOWEST_TRADED_PRICE,
-            .value = data.low_price24h,
+            .value = market_update.params.data.low,
             .begin_time_utc = {},
             .end_time_utc = {},
         },
         {
             .type = StatisticsType::CLOSE_PRICE,
-            .value = data.last_price,
+            .value = market_update.params.data.close,
             .begin_time_utc = {},
             .end_time_utc = {},
         },
         {
             .type = StatisticsType::TRADE_VOLUME,
-            .value = data.volume24h,
+            .value = market_update.params.data.volume,
             .begin_time_utc = {},
             .end_time_utc = {},
         },
@@ -410,167 +477,20 @@ void MarketData::operator()(Trace<protocol::json::BookTickerUpdate> const &event
     auto statistics_update = StatisticsUpdate{
         .stream_id = stream_id_,
         .exchange = shared_.settings.exchange,
-        .symbol = data.symbol,
+        .symbol = market_update.params.name,
         .statistics = statistics,
         .update_type = UpdateType::INCREMENTAL,
         .exchange_time_utc = {},
-        .exchange_sequence = tickers.cross_sequence,
-        .sending_time_utc = tickers.timestamp,
+        .exchange_sequence = {},
+        .sending_time_utc = {},
     };
     create_trace_and_dispatch(shared_.dispatcher, trace_info, statistics_update, true);
-    */
-  });
-}
-
-void MarketData::operator()(Trace<protocol::json::DepthUpdate> const &event) {
-  profile_.depth_update([&]() {
-    auto &[trace_info, depth_update] = event;
-    log::debug("depth_update={}"sv, depth_update);
-    log::info<3>("depth_update={}"sv, depth_update);
-    (*connection_).touch(trace_info.source_receive_time);
-    /*
-    auto &data = depth_update.data;
-    if (depth == 1) {
-      auto helper = [](auto &levels) -> std::pair<double, double> {
-        double price = NaN;
-        double quantity = NaN;
-        // first non-zero quantity
-        for (auto &item : levels) {
-          if (utils::compare(item.quantity, 0.0) > 0) {
-            price = item.price;
-            quantity = item.quantity;
-            break;
-          }
-        }
-        return {price, quantity};
-      };
-      auto [bid_price, bid_quantity] = helper(data.bids);
-      auto [ask_price, ask_quantity] = helper(data.asks);
-      auto top_of_book = TopOfBook{
-          .stream_id = stream_id_,
-          .exchange = shared_.settings.exchange,
-          .symbol = data.symbol,
-          .layer{
-              .bid_price = bid_price,
-              .bid_quantity = bid_quantity,
-              .ask_price = ask_price,
-              .ask_quantity = ask_quantity,
-          },
-          .update_type = map(depth_update.type),
-          .exchange_time_utc = depth_update.timestamp,
-          .exchange_sequence = data.cross_sequence,
-          .sending_time_utc = {},
-      };
-      create_trace_and_dispatch(shared_.dispatcher, trace_info, top_of_book, true);
-    } else {
-      shared_.bids.clear();
-      shared_.asks.clear();
-      auto emplace_back = [](auto &result, auto &item) {
-        auto mbp_update = MBPUpdate{
-            .price = item.price,
-            .quantity = item.quantity,
-            .implied_quantity = NaN,
-            .number_of_orders = {},
-            .update_action = {},
-            .price_level = {},
-        };
-        result.emplace_back(std::move(mbp_update));
-      };
-      for (auto &item : data.bids) {
-        emplace_back(shared_.bids, item);
-      }
-      for (auto &item : data.asks) {
-        emplace_back(shared_.asks, item);
-      }
-      auto market_by_price_update = MarketByPriceUpdate{
-          .stream_id = stream_id_,
-          .exchange = shared_.settings.exchange,
-          .symbol = data.symbol,
-          .bids = shared_.bids,
-          .asks = shared_.asks,
-          .update_type = map(depth_update.type),
-          .exchange_time_utc = depth_update.timestamp,
-          .exchange_sequence = data.cross_sequence,
-          .sending_time_utc = {},
-          .price_precision = {},
-          .quantity_precision = {},
-          .checksum = {},
-      };
-      try {
-        create_trace_and_dispatch(shared_.dispatcher, trace_info, market_by_price_update, true, shared_.final_bids, shared_.final_asks);
-      } catch (BadState &) {
-        // resubscribe(symbol);
-      }
-    }
-    */
-  });
-}
-
-void MarketData::operator()(Trace<protocol::json::TradesUpdate> const &event) {
-  profile_.trades_update([&]() {
-    auto &[trace_info, trades_update] = event;
-    log::debug("trades_update={}"sv, trades_update);
-    log::info<3>("trades_update={}"sv, trades_update);
-    (*connection_).touch(trace_info.source_receive_time);
-    /*
-    auto &trades = shared_.trades;
-    trades.clear();
-    std::chrono::milliseconds timestamp = {};
-    auto dispatch = [&](auto &symbol) {
-      if (std::empty(symbol)) {
-        assert(std::empty(trades));
-      }
-      if (std::empty(trades)) {
-        return;
-      }
-      auto trade_summary = TradeSummary{
-          .stream_id = stream_id_,
-          .exchange = shared_.settings.exchange,
-          .symbol = symbol,
-          .trades = trades,
-          .exchange_time_utc = timestamp,
-          .exchange_sequence = {},
-          .sending_time_utc = trades_update.timestamp,
-      };
-      create_trace_and_dispatch(shared_.dispatcher, trace_info, trade_summary, true);
-      trades.clear();
-      timestamp = {};
-    };
-    std::string_view previous;
-    for (auto &item : trades_update.data) {
-      if (item.symbol != previous) {
-        dispatch(previous);
-        previous = item.symbol;
-      }
-      auto trade_2 = Trade{
-          .side = map(item.side),
-          .price = item.price,
-          .quantity = item.quantity,
-          .trade_id = item.trade_id,
-          .taker_order_id = {},
-          .maker_order_id = {},
-      };
-      trades.emplace_back(std::move(trade_2));
-      utils::update_max(timestamp, item.timestamp);
-    }
-    dispatch(previous);
-    */
-  });
-}
-
-void MarketData::operator()(Trace<protocol::json::MarketUpdate> const &event) {
-  profile_.market_update([&]() {
-    auto &[trace_info, market_update] = event;
-    log::debug("market_update={}"sv, market_update);
-    log::info<3>("market_update={}"sv, market_update);
-    (*connection_).touch(trace_info.source_receive_time);
   });
 }
 
 void MarketData::operator()(Trace<protocol::json::MarketTodayUpdate> const &event) {
   profile_.market_today_update([&]() {
     auto &[trace_info, market_today_update] = event;
-    log::debug("market_today_update={}"sv, market_today_update);
     log::info<3>("market_today_update={}"sv, market_today_update);
     (*connection_).touch(trace_info.source_receive_time);
   });

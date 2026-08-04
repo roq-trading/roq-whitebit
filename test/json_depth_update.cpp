@@ -10,6 +10,8 @@ using namespace roq::whitebit;
 using namespace std::literals;
 using namespace std::chrono_literals;
 
+using namespace Catch::literals;
+
 using value_type = protocol::json::DepthUpdate;
 
 // note! truncated
@@ -42,7 +44,13 @@ TEST_CASE("snapshot", "[json_depth_update]") {
     CHECK(obj.params.data.timestamp == 1785730130604051us);
     CHECK(obj.params.data.update_id == 22216665449);
     REQUIRE(std::size(obj.params.data.asks) == 3);
+    auto &a0 = obj.params.data.asks[0];
+    CHECK(a0.price == 62957.3_a);
+    CHECK(a0.amount == 0.017_a);
     REQUIRE(std::size(obj.params.data.bids) == 3);
+    auto &b0 = obj.params.data.bids[0];
+    CHECK(b0.price == 62957.2_a);
+    CHECK(b0.amount == 0.017_a);
     // CHECK(obj.params.data.event_time == 1785730135294067us);
     CHECK(obj.params.data.event_time == 1785730135200000us);  // XXX FIXME TODO why is this rounded ???
     CHECK(obj.params.name == "BTC_PERP"sv);

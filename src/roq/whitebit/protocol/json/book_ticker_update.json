@@ -12,7 +12,8 @@
     },
     {
       "name": "params",
-      "type": "roq/whitebit/protocol/json/BookTickerUpdateParamsItem"
+      "type": "roq/whitebit/protocol/json/BookTickerUpdateParamsItem",
+      "array": "std/span"
     }
   ]
 }

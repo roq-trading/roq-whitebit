@@ -10,6 +10,8 @@ using namespace roq::whitebit;
 using namespace std::literals;
 using namespace std::chrono_literals;
 
+using namespace Catch::literals;
+
 using value_type = protocol::json::BookTickerUpdate;
 
 TEST_CASE("simple", "[json_book_ticker_update]") {
@@ -30,8 +32,16 @@ TEST_CASE("simple", "[json_book_ticker_update]") {
                  R"(})"sv;
   auto helper = [](value_type const &obj) {
     CHECK(obj.method == protocol::json::Method::BOOK_TICKER_UPDATE);
-    // REQUIRE(std::size(obj.params) == 1);
-    // auto &p0 = obj.params[0];
+    REQUIRE(std::size(obj.params) == 1);
+    auto &p0 = obj.params[0];
+    CHECK(p0.transaction_time == 1785732678280255us);
+    CHECK(p0.message_time == 1785732678281100us);  // XXX FIXME TODO why is this rounded ???
+    CHECK(p0.market == "BTC_PERP"sv);
+    CHECK(p0.update_id == 22217102542);
+    CHECK(p0.best_bid_price == 62965.8_a);
+    CHECK(p0.best_bid_amount == 0.005_a);
+    CHECK(p0.best_ask_price == 62974.2_a);
+    CHECK(p0.best_ask_amount == 0.017_a);
     CHECK(obj.id == 0);
   };
   ParserTester<value_type>::dispatch(helper, message, 8192, 2);

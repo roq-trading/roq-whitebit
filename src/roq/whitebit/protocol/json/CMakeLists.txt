@@ -7,7 +7,6 @@ include(RoqAutogen)
 set(AUTOGEN_SCHEMAS
     book_ticker_update.json
     book_ticker_update_params_item.json
-    book_ticker_update_params_item_item.json
     depth_update.json
     depth_update_params_item.json
     depth_update_params_item_data.json
