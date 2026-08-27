@@ -69,6 +69,14 @@
     {
       "name": "delistedAt",
       "type": "std/microseconds"
+    },
+    {
+      "name": "tickSize",
+      "type": "std/double"
+    },
+    {
+      "name": "stepSize",
+      "type": "std/double"
     }
   ]
 }
