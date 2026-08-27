@@ -19,10 +19,10 @@ namespace json {
 
 std::string_view Encoder::place_order(
     std::string &buffer,
-    roq::CreateOrder const &create_order,
+    roq::CreateOrder const &,
     server::oms::Order const &,
-    server::oms::RefData const &ref_data,
-    std::string_view const &request_id) {
+    server::oms::RefData const &,
+    [[maybe_unused]] std::string_view const &request_id) {
   buffer.clear();
   /*
   auto side = map(create_order.side).template get<Side>();
@@ -60,11 +60,11 @@ std::string_view Encoder::place_order(
 
 std::string_view Encoder::amend_order(
     std::string &buffer,
-    roq::ModifyOrder const &modify_order,
-    server::oms::Order const &order,
-    server::oms::RefData const &ref_data,
+    roq::ModifyOrder const &,
+    server::oms::Order const &,
+    server::oms::RefData const &,
     [[maybe_unused]] std::string_view const &request_id,
-    std::string_view const &previous_request_id) {
+    [[maybe_unused]] std::string_view const &previous_request_id) {
   buffer.clear();
   /*
   fmt::format_to(
@@ -100,10 +100,10 @@ std::string_view Encoder::amend_order(
 std::string_view Encoder::cancel_order(
     std::string &buffer,
     roq::CancelOrder const &,
-    server::oms::Order const &order,
+    server::oms::Order const &,
     server::oms::RefData const &,
     [[maybe_unused]] std::string_view const &request_id,
-    std::string_view const &previous_request_id) {
+    [[maybe_unused]] std::string_view const &previous_request_id) {
   buffer.clear();
   /*
   fmt::format_to(
@@ -131,7 +131,7 @@ std::string_view Encoder::cancel_order(
 }
 
 std::string_view Encoder::cancel_all_orders(
-    std::string &buffer, roq::CancelAllOrders const &, [[maybe_unused]] std::string_view const &request_id, std::string_view const &symbol) {
+    std::string &buffer, roq::CancelAllOrders const &, [[maybe_unused]] std::string_view const &request_id, [[maybe_unused]] std::string_view const &symbol) {
   buffer.clear();
   /*
   fmt::format_to(
@@ -150,12 +150,12 @@ std::string_view Encoder::cancel_all_orders(
 
 std::string_view Encoder::place_order_ws(
     std::string &buffer,
-    roq::CreateOrder const &create_order,
+    roq::CreateOrder const &,
     server::oms::Order const &,
-    server::oms::RefData const &ref_data,
-    std::string_view const &request_id,
-    std::chrono::milliseconds now_utc,
-    std::chrono::milliseconds recv_window) {
+    server::oms::RefData const &,
+    [[maybe_unused]] std::string_view const &request_id,
+    [[maybe_unused]] std::chrono::milliseconds now_utc,
+    [[maybe_unused]] std::chrono::milliseconds recv_window) {
   buffer.clear();
   /*
   auto side = map(create_order.side).template get<Side>();
@@ -205,13 +205,13 @@ std::string_view Encoder::place_order_ws(
 
 std::string_view Encoder::amend_order_ws(
     std::string &buffer,
-    roq::ModifyOrder const &modify_order,
-    server::oms::Order const &order,
-    server::oms::RefData const &ref_data,
+    roq::ModifyOrder const &,
+    server::oms::Order const &,
+    server::oms::RefData const &,
     [[maybe_unused]] std::string_view const &request_id,
-    std::string_view const &previous_request_id,
-    std::chrono::milliseconds now_utc,
-    std::chrono::milliseconds recv_window) {
+    [[maybe_unused]] std::string_view const &previous_request_id,
+    [[maybe_unused]] std::chrono::milliseconds now_utc,
+    [[maybe_unused]] std::chrono::milliseconds recv_window) {
   buffer.clear();
   /*
   fmt::format_to(
@@ -255,12 +255,12 @@ std::string_view Encoder::amend_order_ws(
 std::string_view Encoder::cancel_order_ws(
     std::string &buffer,
     roq::CancelOrder const &,
-    server::oms::Order const &order,
+    server::oms::Order const &,
     server::oms::RefData const &,
     [[maybe_unused]] std::string_view const &request_id,
-    std::string_view const &previous_request_id,
-    std::chrono::milliseconds now_utc,
-    std::chrono::milliseconds recv_window) {
+    [[maybe_unused]] std::string_view const &previous_request_id,
+    [[maybe_unused]] std::chrono::milliseconds now_utc,
+    [[maybe_unused]] std::chrono::milliseconds recv_window) {
   buffer.clear();
   /*
   fmt::format_to(
