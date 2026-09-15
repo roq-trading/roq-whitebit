@@ -250,6 +250,7 @@ void Rest::operator()(Trace<protocol::json::MarketInfoAck> const &event) {
         .description = item.name,
         .security_type = map(item.type),
         .external_security_id = {},
+        .market_segment = {},
         .cfi_code = {},
         .base_currency = item.money,   // XXX FIXME TODO CHECK
         .quote_currency = item.stock,  // XXX FIXME TODO CHECK
