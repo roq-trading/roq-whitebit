@@ -17,7 +17,7 @@
 #include "roq/whitebit/gateway/api.hpp"
 #include "roq/whitebit/gateway/settings.hpp"
 
-#include "roq/whitebit/tools/rate_limit.hpp"
+#include "roq/whitebit/tools/throttle.hpp"
 
 namespace roq {
 namespace whitebit {
@@ -33,7 +33,7 @@ struct Shared final {
   Settings const &settings;
   API const api;
 
-  tools::RateLimit rate_limit;
+  tools::Throttle throttle;
 
   core::limit::RateLimiter rate_limiter;
 
