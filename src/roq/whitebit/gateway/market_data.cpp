@@ -412,6 +412,8 @@ void MarketData::operator()(Trace<protocol::json::TradesUpdate> const &event) {
     trades.clear();
     for (auto &item : trades_update.params.data) {
       auto trade = Trade{
+          .trade_conditions = {},
+          .trade_type = {},
           .side = map(item.type),
           .price = item.price,
           .quantity = item.amount,
