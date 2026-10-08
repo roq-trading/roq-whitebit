@@ -16,6 +16,8 @@
 
 #include "roq/core/json/buffer_stack.hpp"
 
+#include "roq/server/stream.hpp"
+
 #include "roq/whitebit/gateway/shared.hpp"
 
 #include "roq/whitebit/protocol/json/parser.hpp"
@@ -24,26 +26,36 @@ namespace roq {
 namespace whitebit {
 namespace gateway {
 
-struct MarketData final : public web::socket::Client::Handler, public protocol::json::Parser::Handler {
+struct MarketData final : public Base<MarketData>,
+                          public server::MarketDataStream,
+                          public web::socket::Client::Handler,
+                          public protocol::json::Parser::Handler {
   struct Handler {};
 
   MarketData(Handler &, io::Context &, uint16_t stream_id, Shared &, size_t index);
 
-  MarketData(MarketData const &) = delete;
+  // protected:
+  friend base_type;
 
-  uint16_t stream_id() const { return stream_id_; }
+  // server::Stream
 
-  bool ready() const { return connection_status_ == ConnectionStatus::READY; }
+  uint16_t stream_id() const override { return stream_id_; }
 
-  void operator()(Event<Start> const &);
-  void operator()(Event<Stop> const &);
-  void operator()(Event<Timer> const &);
+  bool ready() const override { return connection_status_ == ConnectionStatus::READY; }
 
-  void operator()(metrics::Writer &) const;
+  void operator()(Event<Start> const &) override;
+  void operator()(Event<Stop> const &) override;
+  void operator()(Event<Timer> const &) override;
 
-  void subscribe(size_t start_from = 0);
+  void operator()(metrics::Writer &) const override;
+
+  // server::MarketDataStream
+
+  void subscribe(size_t start_from = 0) override;
 
  protected:
+  void operator()(Trace<ConnectionStatus> const &, std::string_view const &reason = {}) override;
+
   // web::socket::Client::Handler
 
   void operator()(Trace<web::socket::Connected> const &) override;
@@ -54,9 +66,19 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
   void operator()(Trace<web::socket::Text> const &) override;
   void operator()(Trace<web::socket::Binary> const &) override;
 
-  // helpers
+  // protocol::json::Parser::Handler
 
-  void operator()(ConnectionStatus, std::string_view const &reason = {});
+  void operator()(Trace<protocol::json::Pong> const &) override;
+
+  void operator()(Trace<protocol::json::Response> const &) override;
+
+  void operator()(Trace<protocol::json::BookTickerUpdate> const &) override;
+  void operator()(Trace<protocol::json::DepthUpdate> const &) override;
+  void operator()(Trace<protocol::json::TradesUpdate> const &) override;
+  void operator()(Trace<protocol::json::MarketUpdate> const &) override;
+  void operator()(Trace<protocol::json::MarketTodayUpdate> const &) override;
+
+  // helpers
 
   void subscribe(std::span<Symbol const> const &symbols);
   void subscribe(std::string_view const &method, std::span<Symbol const> const &symbols);
@@ -66,19 +88,6 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
 
   void parse(std::string_view const &message);
 
-  // protocol::json::Parser::Handler
-
-  void operator()(Trace<protocol::json::Pong> const &) override;
-  // response
-  void operator()(Trace<protocol::json::Response> const &) override;
-  // public stream
-  void operator()(Trace<protocol::json::BookTickerUpdate> const &) override;
-  void operator()(Trace<protocol::json::DepthUpdate> const &) override;
-  void operator()(Trace<protocol::json::TradesUpdate> const &) override;
-  void operator()(Trace<protocol::json::MarketUpdate> const &) override;
-  void operator()(Trace<protocol::json::MarketTodayUpdate> const &) override;
-  // private stream
-
  private:
   [[maybe_unused]] Handler &handler_;
   // config
@@ -86,9 +95,6 @@ struct MarketData final : public web::socket::Client::Handler, public protocol::
   std::string const name_;
   size_t const index_;
   std::chrono::nanoseconds const ping_frequency_;
-  bool const spot_;
-  size_t const mbp_depth_;
-  std::string const mbp_topic_;
   // web socket
   std::unique_ptr<web::socket::Client> const connection_;
   // buffers

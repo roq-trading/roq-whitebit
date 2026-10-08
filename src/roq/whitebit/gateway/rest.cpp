@@ -95,9 +95,11 @@ Rest::Rest(Handler &handler, io::Context &context, uint16_t stream_id, Shared &s
       latency_{
           .ping = create_metrics(shared.settings, name_, "ping"sv),
       },
-      shared_{shared}, download_{shared.settings.rest.request_timeout, [this](auto state) { return download(state); }},
+      shared_{shared}, download_{shared.settings.rest.request_timeout, [this](auto &event) { return download(event); }},
       rate_limiter{create_rate_limiter(shared.settings)} {
 }
+
+// web::rest::Client::Handler
 
 void Rest::operator()(Event<Start> const &) {
   (*connection_).start();
@@ -123,9 +125,9 @@ void Rest::operator()(metrics::Writer &writer) const {
       .write(latency_.ping, metrics::Type::LATENCY);
 }
 
-void Rest::operator()(ConnectionStatus connection_status, std::string_view const &reason) {
+void Rest::operator()(Trace<ConnectionStatus> const &event, std::string_view const &reason) {
+  auto &[trace_info, connection_status] = event;
   connection_status_ = connection_status;
-  TraceInfo trace_info;
   auto stream_status = StreamStatus{
       .stream_id = stream_id_,
       .account = {},
@@ -145,17 +147,21 @@ void Rest::operator()(ConnectionStatus connection_status, std::string_view const
   create_trace_and_dispatch(shared_.dispatcher, trace_info, stream_status);
 }
 
-void Rest::operator()(Trace<web::rest::Connected> const &) {
+// web::rest::Client::Handler
+
+void Rest::operator()(Trace<web::rest::Connected> const &event) {
+  auto &[trace_info, connected] = event;
   if (download_.downloading()) {
-    download_.bump();
+    download_.bump(trace_info);
   } else {
-    download_.begin();
+    download_.begin(trace_info);
   }
 }
 
-void Rest::operator()(Trace<web::rest::Disconnected> const &) {
+void Rest::operator()(Trace<web::rest::Disconnected> const &event) {
+  auto &[trace_info, disconnected] = event;
   ++counter_.disconnect;
-  (*this)(ConnectionStatus::DISCONNECTED);
+  create_trace_and_dispatch_2(trace_info, ConnectionStatus::DISCONNECTED);
   if (!download_.downloading()) {
     download_.reset();
   }
@@ -172,25 +178,28 @@ void Rest::operator()(Trace<web::rest::Latency> const &event) {
   latency_.ping.update(latency.sample);
 }
 
-uint32_t Rest::download(State state) {
+// core::Download
+
+int32_t Rest::download(Trace<State> const &event) {
+  auto &[trace_info, state] = event;
   switch (state) {
     using enum State;
     case UNDEFINED:
       assert(false);
       break;
     case GET_MARKET_INFO:
-      (*this)(ConnectionStatus::DOWNLOADING, "get-instruments-info"sv);
+      create_trace_and_dispatch_2(trace_info, ConnectionStatus::DOWNLOADING, "get-instruments-info"sv);
       get_market_info();
       return 1;
     case DONE:
-      (*this)(ConnectionStatus::READY);
+      create_trace_and_dispatch_2(trace_info, ConnectionStatus::READY);
       return 0;
   }
   assert(false);
   return 0;
 }
 
-// instruments-info
+// market-info
 
 void Rest::get_market_info() {
   profile_.market_info([&]() {
@@ -216,6 +225,7 @@ void Rest::get_market_info() {
 void Rest::get_market_info_ack(Trace<web::rest::Response> const &event, uint32_t sequence) {
   auto const STATE = State::GET_MARKET_INFO;
   profile_.market_info_ack([&]() {
+    auto &[trace_info, response] = event;
     auto handle_error = [&](auto origin, auto status, auto error, auto const &text) {
       log::warn(R"(origin={}, error={}, status={}, text="{}")"sv, origin, error, status, text);
       download_.retry(STATE);
@@ -225,9 +235,8 @@ void Rest::get_market_info_ack(Trace<web::rest::Response> const &event, uint32_t
         log::info("Download state={} has already been processed"sv, STATE);
       } else {
         protocol::json::MarketInfoAck market_info_ack{body, decode_buffer_};
-        Trace event_2{event, market_info_ack};
-        (*this)(event_2);
-        download_.check(STATE);
+        create_trace_and_dispatch_2(trace_info, market_info_ack);
+        download_.check(trace_info, STATE);
       }
     };
     process_response(event, handle_error, handle_success);
