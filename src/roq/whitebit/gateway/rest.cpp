@@ -213,12 +213,8 @@ void Rest::get_market_info() {
         .body = {},
         .quality_of_service = {},
     };
-    auto callback = [this, sequence = download_.sequence()]([[maybe_unused]] auto &request_id, auto &response) {
-      TraceInfo trace_info;
-      Trace event{trace_info, response};
-      get_market_info_ack(event, sequence);
-    };
-    (*connection_)("market-instrument-info"sv, request, callback);
+    auto callback = [this, sequence = download_.sequence()](auto &event, [[maybe_unused]] auto &request_id) { get_market_info_ack(event, sequence); };
+    (*connection_)(request, callback, "market-instrument-info"sv);
   });
 }
 
