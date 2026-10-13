@@ -10,7 +10,6 @@
 #include "roq/server.hpp"
 
 #include "roq/core/symbols.hpp"
-#include "roq/core/timer_queue.hpp"
 
 #include "roq/core/limit/rate_limiter.hpp"
 
