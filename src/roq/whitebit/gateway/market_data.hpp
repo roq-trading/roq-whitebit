@@ -84,7 +84,7 @@ struct MarketData final : public Base<MarketData>,
   void subscribe(std::string_view const &method, std::span<Symbol const> const &symbols);
   void subscribe(std::string_view const &method, std::span<Symbol const> const &symbols, size_t limit);
 
-  void send_ping(std::chrono::nanoseconds now);
+  void send_ping();
 
   void parse(TraceInfo const &, std::string_view const &message);
 
