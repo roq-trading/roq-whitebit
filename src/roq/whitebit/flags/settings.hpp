@@ -9,7 +9,6 @@
 #include "roq/server/flags/settings.hpp"
 
 #include "roq/whitebit/flags/flags.hpp"
-#include "roq/whitebit/flags/mbp.hpp"
 #include "roq/whitebit/flags/misc.hpp"
 #include "roq/whitebit/flags/request.hpp"
 #include "roq/whitebit/flags/rest.hpp"
@@ -27,7 +26,6 @@ struct ROQ_PUBLIC Settings : public server::flags::Settings {
   flags::Misc misc;
   flags::REST rest;
   flags::WS ws;
-  flags::MBP mbp;
   flags::Request request;
 
  private:
@@ -50,7 +48,6 @@ struct fmt::formatter<roq::whitebit::flags::Settings> {
         R"(misc={}, )"
         R"(rest={}, )"
         R"(ws={}, )"
-        R"(mbp={}, )"
         R"(request={}, )"
         R"(server={})"
         R"(}})"sv,
@@ -58,7 +55,6 @@ struct fmt::formatter<roq::whitebit::flags::Settings> {
         value.misc,
         value.rest,
         value.ws,
-        value.mbp,
         value.request,
         static_cast<roq::server::Settings const &>(value));
   }
