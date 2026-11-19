@@ -46,7 +46,7 @@ struct Parser final {
     */
   };
 
-  static bool dispatch(Handler &, std::string_view const &message, core::json::BufferStack &, TraceInfo const &, bool allow_unknown_event_types);
+  static bool dispatch(Handler &, std::string_view const &message, core::json::BufferStack &, TraceInfo const &, bool disable_strict_parsing);
 };
 
 }  // namespace json
