@@ -90,32 +90,28 @@ struct MarketData final : public Base<MarketData>,
 
  private:
   [[maybe_unused]] Handler &handler_;
-  // config
+  //
   uint16_t const stream_id_;
   std::string const name_;
   size_t const index_;
   std::chrono::nanoseconds const ping_frequency_;
-  // web socket
   std::unique_ptr<web::socket::Client> const connection_;
-  // buffers
+  //
   core::json::BufferStack decode_buffer_;
-  // session
   uint64_t request_id_ = {};
-  // metrics
   struct {
     utils::metrics::Counter disconnect;
   } counter_;
   struct {
-    utils::metrics::Profile parse, response, book_ticker_update, depth_update, trades_update, market_update, market_today_update;
+    utils::metrics::Profile parse,  //
+        response,                   //
+        book_ticker_update, depth_update, trades_update, market_update, market_today_update;
   } profile_;
   struct {
     utils::metrics::Latency ping, heartbeat;
   } latency_;
-  // cache
   Shared &shared_;
-  // state
   ConnectionStatus connection_status_ = {};
-  // ping
   std::chrono::nanoseconds next_ping_ = {};
 };
 
