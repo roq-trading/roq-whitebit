@@ -100,6 +100,17 @@ Rest::Rest(Handler &handler, io::Context &context, uint16_t stream_id, Shared &s
 
 // web::rest::Client::Handler
 
+void Rest::operator()(metrics::Writer &writer) const {
+  writer
+      // counter
+      .write(counter_.disconnect, metrics::Type::COUNTER)
+      // profile
+      .write(profile_.market_info, metrics::Type::PROFILE)
+      .write(profile_.market_info_ack, metrics::Type::PROFILE)
+      // latency
+      .write(latency_.ping, metrics::Type::LATENCY);
+}
+
 void Rest::operator()(Trace<Start> const &event) {
   (*connection_)(event);
 }
@@ -113,17 +124,6 @@ void Rest::operator()(Trace<Timer> const &event) {
     if (ready()) {
     }
   }
-}
-
-void Rest::operator()(metrics::Writer &writer) const {
-  writer
-      // counter
-      .write(counter_.disconnect, metrics::Type::COUNTER)
-      // profile
-      .write(profile_.market_info, metrics::Type::PROFILE)
-      .write(profile_.market_info_ack, metrics::Type::PROFILE)
-      // latency
-      .write(latency_.ping, metrics::Type::LATENCY);
 }
 
 void Rest::operator()(Trace<ConnectionStatus> const &event, std::string_view const &reason) {
